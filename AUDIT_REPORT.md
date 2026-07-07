@@ -1,3 +1,6 @@
+## 3.7.5 platform detection audit repair
+Claude's v3.7.4 package passed syntax and startup smoke, but the full Python suite failed because release metadata tests still expected v3.7.3. The service-worker cache also remained on the older Claude package repair cache. This build repairs those issues, adds platform-detection smoke coverage, and keeps the secret scan clean.
+
 ## 3.7.3 Claude ZIP audit
 Reviewed the uploaded Claude ZIP. It did not contain functional runtime changes compared with v3.7.2, but it removed required support files: `tests/`, `tools/`, and `_redirects`. This broke smoke/unit test commands. This package restores those files, keeps the public security audit, and passes all tests.
 

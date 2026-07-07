@@ -420,6 +420,57 @@ async function runOCRReviewSmoke() {
     }
   }
 
+
+  const platformCases = [
+    {
+      label: 'DoorDash Dasher signal',
+      text: 'Dasher\nNew order\nGuaranteed $9.50\n4.1 mi\n21 min\nPickup from Taco Bell',
+      expected: 'DoorDash'
+    },
+    {
+      label: 'Uber Trip Radar signal',
+      text: 'Trip Radar\nIncludes trip supplement\n$12.34\n5.6 mi\n28 min\nGo to Sushi Ai',
+      expected: 'Uber Eats'
+    },
+    {
+      label: 'Grubhub diner signal',
+      text: 'Grubhub\nDiner requested contactless\nAccept offer\nPay $10.75\n3.2 miles\n19 min\nRestaurant: Seoul Taco',
+      expected: 'Grubhub'
+    },
+    {
+      label: 'Instacart batch signal',
+      text: 'Instacart\nFull-service batch\n12 items to shop\n$18.40\n6.0 mi\n45 min\nStore: Schnucks',
+      expected: 'Instacart'
+    },
+    {
+      label: 'Spark Walmart signal',
+      text: 'Spark Driver\nWalmart curbside\nRound Robin offer\n$16.00\n8.1 miles\n35 min',
+      expected: 'Spark'
+    },
+    {
+      label: 'Roadie gig signal',
+      text: 'Roadie\nNew gig\nPickup at Best Buy\n$21.50\n12.3 miles\n40 min',
+      expected: 'Roadie'
+    },
+    {
+      label: 'Catering ezCater signal',
+      text: 'ezCater\nCatering order\n$42.00\n14 miles\n55 min\nPickup from Panera',
+      expected: 'Catering'
+    }
+  ];
+
+  for (const sample of platformCases) {
+    const platformHarness = createHarness({}, {
+      Tesseract: { recognize: async () => ({ data: { text: sample.text } }) }
+    });
+    vm.runInNewContext(appCode, platformHarness.context, { filename: 'app.js' });
+    await callFirst(platformHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: `${sample.label}.png` }] } });
+    const detectedPlatform = platformHarness.elements.get('ocrCompanyInput').value;
+    if (detectedPlatform !== sample.expected) {
+      throw new Error(`OCR platform detection failed for ${sample.label}: expected ${sample.expected}, got ${detectedPlatform}`);
+    }
+  }
+
   const beforeSave = JSON.parse(harness.storage.get('driveledger.deliveries.v1') || '[]').length;
   await callFirst(harness.elements.get('saveOcrBtn'), 'click', {});
   const saved = JSON.parse(harness.storage.get('driveledger.deliveries.v1') || '[]');
@@ -995,7 +1046,7 @@ function runPwaOfflinePolishSmoke() {
   for (const asset of ['./index.html', './styles.css', './app.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png']) {
     if (!serviceWorker.includes(`"${asset}"`)) throw new Error(`service worker should cache core app shell assets: ${asset}`);
   }
-  for (const token of ['CACHE_VERSION = "v33-claude-package-repair"', 'OFFLINE_FALLBACK', 'networkFirst', 'staleWhileRevalidate', 'Tesseract CDN']) {
+  for (const token of ['CACHE_VERSION = "v34-platform-detection-audit-fix"', 'OFFLINE_FALLBACK', 'networkFirst', 'staleWhileRevalidate', 'Tesseract CDN']) {
     if (!serviceWorker.includes(token)) throw new Error(`service worker missing PWA offline token: ${token}`);
   }
   if (!html.includes('id="offlineBanner"') || !css.includes('offline-banner')) {

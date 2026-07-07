@@ -1,3 +1,10 @@
+## 3.7.5 — Platform detection audit repair
+- Reviewed Claude's v3.7.4 platform-detection package.
+- Fixed release metadata/test mismatch where tests still expected v3.7.3.
+- Updated stale service-worker cache from the Claude package repair cache to `driveledger-v34-platform-detection-audit-fix`.
+- Added OCR platform-detection smoke coverage for DoorDash, Uber Eats, Grubhub, Instacart, Spark, Roadie, and Catering.
+- Added `PLATFORM_DETECTION_AUDIT.md`.
+
 ## 3.7.3 — Claude package review repair
 - Reviewed uploaded `driveledger-fixed.zip` from Claude.
 - Confirmed core runtime files matched v3.7.2, but Claude's ZIP was missing `tests/`, `tools/`, and `_redirects`.

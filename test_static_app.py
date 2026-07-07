@@ -84,7 +84,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         self.assertIn('./manifest.json', cached_assets)
         self.assertIn('./icons/icon-192.png', cached_assets)
         self.assertIn('./icons/icon-512.png', cached_assets)
-        self.assertIn('CACHE_VERSION = "v33-claude-package-repair"', self.service_worker)
+        self.assertIn('CACHE_VERSION = "v34-platform-detection-audit-fix"', self.service_worker)
         self.assertIn('OFFLINE_FALLBACK = "./index.html"', self.service_worker)
         self.assertIn('networkFirst(request)', self.service_worker)
         self.assertIn('staleWhileRevalidate(request)', self.service_worker)
@@ -550,7 +550,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         for token in [
             'apple-mobile-web-app-capable', 'application-name', 'color-scheme',
             'offline-banner', 'Offline mode is active', 'updateNetworkStatus',
-            'serviceWorker', 'driveledger-v33-claude-package-repair', 'OFFLINE_FALLBACK',
+            'serviceWorker', 'driveledger-v34-platform-detection-audit-fix', 'OFFLINE_FALLBACK',
             'cacheCoreAssets', 'deleteOldCaches', 'staleWhileRevalidate',
             'screenshot OCR may need internet', 'OCR library is not loaded yet'
         ]:
@@ -726,6 +726,33 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
 
 
 
+
+    def test_platform_detection_audit_coverage_exists(self):
+        self.assertTrue((PROJECT_ROOT / 'PLATFORM_DETECTION_AUDIT.md').is_file())
+        for token in [
+            'platformFingerprints',
+            'detectPlatformDetailed',
+            'DoorDash',
+            'Uber Eats',
+            'Grubhub',
+            'Instacart',
+            'Spark',
+            'Roadie',
+            'Catering',
+        ]:
+            self.assertIn(token, self.app_js)
+        smoke = (PROJECT_ROOT / 'tools' / 'smoke-startup.js').read_text(encoding='utf-8')
+        for token in [
+            'DoorDash Dasher signal',
+            'Uber Trip Radar signal',
+            'Grubhub diner signal',
+            'Instacart batch signal',
+            'Spark Walmart signal',
+            'Roadie gig signal',
+            'Catering ezCater signal',
+        ]:
+            self.assertIn(token, smoke)
+
     def test_public_package_has_no_obvious_exposed_secrets(self):
         secret_patterns = [
             r'sk-[A-Za-z0-9_\-]{20,}',
@@ -780,8 +807,8 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
 
     def test_v3_release_candidate_metadata_and_docs_exist(self):
         package = json.loads((PROJECT_ROOT / 'package.json').read_text(encoding='utf-8'))
-        self.assertEqual(package.get('version'), '3.7.3')
-        self.assertIn('v33-claude-package-repair', self.service_worker)
+        self.assertEqual(package.get('version'), '3.7.5')
+        self.assertIn('v34-platform-detection-audit-fix', self.service_worker)
         self.assertIn('Designed by Tech Phactory Solutions', self.html)
         self.assertIn('app-credit', self.html)
         self.assertIn('maker-line', self.html)
@@ -793,7 +820,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         for token in ['v3 Release Candidate', 'Manual QA checklist', 'Known limitations', 'GitHub Pages']:
             self.assertIn(token, readme)
         self.assertIn('Final Release Audit', audit)
-        self.assertIn('3.7.3', changelog)
+        self.assertIn('3.7.5', changelog)
 
 
     def test_luxury_refinement_and_restaurant_ocr_exist(self):

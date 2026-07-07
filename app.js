@@ -2495,7 +2495,14 @@
     if (!parsed) return;
     const label = confidenceLabel(parsed.confidence);
     const platform = allowedCompanies.has(parsed.platform) ? parsed.platform : "Other";
-    els.ocrCompany.textContent = parsed.platform || "Needs review";
+    if (parsed.platform) {
+      const evidence = Array.isArray(parsed.platformEvidence) ? parsed.platformEvidence.slice(0, 3) : [];
+      els.ocrCompany.textContent = evidence.length
+        ? `${parsed.platform} (matched ${evidence.join(", ")})`
+        : parsed.platform;
+    } else {
+      els.ocrCompany.textContent = "Needs review";
+    }
     if (els.ocrMerchant) els.ocrMerchant.textContent = parsed.merchant || "Needs review";
     els.ocrEarnings.textContent = parsed.earnings ? money.format(parsed.earnings) : "Needs review";
     els.ocrMiles.textContent = parsed.miles ? `${parsed.miles.toFixed(1)} mi` : "Needs review";
@@ -2639,18 +2646,31 @@
     const rawText = String(text || "");
     const lines = ocrLines(rawText);
     const normalized = rawText.replace(/\s+/g, " ").trim();
-    const platform = detectPlatform(normalized);
+    const platformResult = detectPlatformDetailed(normalized);
+    const platform = platformResult.platform;
     const earnings = detectEarnings(normalized);
     const miles = detectMiles(normalized);
     const minutes = detectMinutes(normalized);
     const merchant = detectMerchant(lines, normalized, platform);
+    // Weight the platform's contribution to overall confidence by how sure the
+    // fingerprint match was, so a strong brand hit boosts more than a weak guess.
     let confidence = 15;
-    if (platform) confidence += 22;
+    if (platform) confidence += Math.round(8 + (platformResult.platformConfidence / 100) * 16);
     if (merchant) confidence += 18;
     if (earnings) confidence += 28;
     if (miles) confidence += 22;
     if (minutes) confidence += 8;
-    return { platform, merchant, restaurant: merchant, earnings, miles, minutes, confidence: Math.min(confidence, 98) };
+    return {
+      platform,
+      platformConfidence: platformResult.platformConfidence,
+      platformEvidence: platformResult.evidence,
+      merchant,
+      restaurant: merchant,
+      earnings,
+      miles,
+      minutes,
+      confidence: Math.min(confidence, 98)
+    };
   }
 
   function ocrLines(text) {
@@ -2824,16 +2844,138 @@
     return candidates[0].value;
   }
 
+  // Each app's driver interface has a distinctive vocabulary, not just a logo.
+  // We identify the platform by matching that fingerprint (brand tokens PLUS the
+  // UI terminology unique to each app) and scoring the evidence, so a stray
+  // competitor word or a mis-OCR'd logo can't misclassify the whole screenshot.
+  // Signal format: [regex, weight, humanLabel].
+  const platformFingerprints = {
+    "DoorDash": [
+      [/\bdoordash\b/i, 10, "DoorDash"],
+      [/\bdoor\s*dash\b/i, 9, "Door Dash"],
+      [/\bdasher\b/i, 8, "Dasher"],
+      [/\bred\s*card\b/i, 7, "Red Card"],
+      [/\bdasher\s*direct\b/i, 7, "DasherDirect"],
+      [/\bpeak\s*pay\b/i, 6, "Peak Pay"],
+      [/\bearn\s*by\s*time\b/i, 6, "Earn by Time"],
+      [/\bearn\s*per\s*offer\b/i, 6, "Earn per Offer"],
+      [/\bdash\s*now\b/i, 6, "Dash Now"],
+      [/\bshop\s*(?:&|and)\s*deliver\b/i, 5, "Shop & Deliver"],
+      [/\bfast\s*pay\b/i, 4, "Fast Pay"],
+      [/\bhotspot/i, 3, "hotspots"],
+      [/\bdash\b/i, 3, "Dash"],
+      [/\bguaranteed\b/i, 2, "Guaranteed"],
+      [/\bdecline\b/i, 2, "Decline"]
+    ],
+    "Uber Eats": [
+      [/\buber\s*eats\b/i, 10, "Uber Eats"],
+      [/\bubereats\b/i, 10, "UberEats"],
+      [/\buber\s*eats\s*pro\b/i, 8, "Uber Eats Pro"],
+      [/\btrip\s*radar\b/i, 8, "Trip Radar"],
+      [/\baccept\s*request\b/i, 7, "Accept request"],
+      [/\btrip\s*request\b/i, 7, "trip request"],
+      [/\btrip\s*supplement\b/i, 7, "trip supplement"],
+      [/\buber\s*one\b/i, 6, "Uber One"],
+      [/\bdelivery\s*partner\b/i, 5, "delivery partner"],
+      [/\buber\b/i, 5, "Uber"],
+      [/\bincludes?\s*(?:a\s*)?trip\b/i, 4, "included trip"],
+      [/\bgo\s*offline\b/i, 2, "go offline"],
+      [/\btrip\b/i, 2, "Trip"]
+    ],
+    "Grubhub": [
+      [/\bgrubhub\b/i, 10, "Grubhub"],
+      [/\bgrub\s*hub\b/i, 9, "Grub Hub"],
+      [/\baccept\s*offer\b/i, 7, "Accept offer"],
+      [/\bdiner\b/i, 7, "diner"],
+      [/\bgrubhub\s*\+/i, 5, "Grubhub+"],
+      [/\bscheduled?\s*block/i, 4, "scheduled block"],
+      [/\btoolkit\b/i, 3, "toolkit"],
+      [/\bblock\b/i, 3, "block scheduling"],
+      [/\bcatering\b/i, 3, "Catering"],
+      [/\bcare\b/i, 2, "Grubhub Care"]
+    ],
+    "Instacart": [
+      [/\binstacart\b/i, 10, "Instacart"],
+      [/\bfull[-\s]*service\s*(?:shop|batch)/i, 6, "full-service batch"],
+      [/\bshopper\b/i, 5, "shopper"],
+      [/\bbatch\b/i, 5, "batch"],
+      [/\bitems?\s*to\s*shop\b/i, 4, "items to shop"],
+      [/\breplacement/i, 3, "replacements"],
+      [/\bpick\s*&?\s*pack/i, 3, "pick & pack"]
+    ],
+    "Spark": [
+      [/\bspark\s*driver\b/i, 10, "Spark Driver"],
+      [/\bwalmart\b/i, 7, "Walmart"],
+      [/\bspark\b/i, 6, "Spark"],
+      [/\bround\s*robin\b/i, 4, "Round Robin"],
+      [/\bcurbside\b/i, 3, "curbside"]
+    ],
+    "Roadie": [
+      [/\broadie\b/i, 10, "Roadie"],
+      [/\bgig\b/i, 2, "gig"]
+    ],
+    "Catering": [
+      [/\bezcater\b/i, 9, "ezCater"],
+      [/\bcater\s*valley\b/i, 8, "CaterValley"],
+      [/\bcatering\s*order\b/i, 6, "catering order"],
+      [/\bcatering\b/i, 6, "Catering"]
+    ]
+  };
+
+  // When a competitor hallmark appears, actively argue against the other apps so
+  // a close, low-evidence call doesn't tip the wrong way.
+  const platformCrossPenalties = [
+    [/\bdiner\b/i, { "Uber Eats": -3, "DoorDash": -3 }],
+    [/\bdasher\b/i, { "Uber Eats": -4, "Grubhub": -4 }],
+    [/\btrip\s*(?:request|radar)\b/i, { "DoorDash": -3, "Grubhub": -3 }]
+  ];
+
+  function detectPlatformDetailed(text) {
+    const source = String(text || "");
+    if (!source.trim()) return { platform: "", platformConfidence: 0, evidence: [], scores: {} };
+
+    const scores = {};
+    const evidenceByPlatform = {};
+    for (const [platform, signals] of Object.entries(platformFingerprints)) {
+      let score = 0;
+      const hits = [];
+      const seen = new Set();
+      for (const [regex, weight, labelText] of signals) {
+        if (!regex.test(source) || seen.has(labelText)) continue;
+        seen.add(labelText);
+        score += weight;
+        hits.push({ label: labelText, weight });
+      }
+      if (score > 0) { scores[platform] = score; evidenceByPlatform[platform] = hits; }
+    }
+
+    for (const [regex, penalties] of platformCrossPenalties) {
+      if (!regex.test(source)) continue;
+      for (const [platform, penalty] of Object.entries(penalties)) {
+        if (scores[platform] !== undefined) scores[platform] = Math.max(0, scores[platform] + penalty);
+      }
+    }
+
+    const ranked = Object.entries(scores).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]);
+    if (!ranked.length) return { platform: "", platformConfidence: 0, evidence: [], scores };
+
+    const [topPlatform, topScore] = ranked[0];
+    const runnerUp = ranked[1] ? ranked[1][1] : 0;
+    const margin = topScore - runnerUp;
+    let confidence = Math.min(99, Math.round(
+      Math.min(topScore, 12) / 12 * 65 + Math.min(margin, 10) / 10 * 34
+    ));
+    const hasBrandHit = (evidenceByPlatform[topPlatform] || []).some((h) => h.weight >= 9);
+    if (hasBrandHit) confidence = Math.max(confidence, 88);
+
+    const evidence = (evidenceByPlatform[topPlatform] || [])
+      .sort((a, b) => b.weight - a.weight)
+      .map((h) => h.label);
+    return { platform: topPlatform, platformConfidence: confidence, evidence, scores };
+  }
+
   function detectPlatform(text) {
-    const low = text.toLowerCase();
-    if (/door\s*dash|doordash|dash/.test(low)) return "DoorDash";
-    if (/uber\s*eats|ubereats|uber/.test(low)) return "Uber Eats";
-    if (/grub\s*hub|grubhub/.test(low)) return "Grubhub";
-    if (/instacart/.test(low)) return "Instacart";
-    if (/spark|walmart/.test(low)) return "Spark";
-    if (/roadie/.test(low)) return "Roadie";
-    if (/catering|ezcater/.test(low)) return "Catering";
-    return "";
+    return detectPlatformDetailed(text).platform;
   }
 
   function parseMoneyToken(token) {

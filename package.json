@@ -1,8 +1,8 @@
 {
   "name": "driveledger-pwa",
-  "version": "3.7.3",
+  "version": "3.7.5",
   "private": true,
-  "description": "DriveLedger repaired after Claude package review: restored missing tests/tools/_redirects, retained public security audit, modern UI, screenshot-first quick add, OCR review, local-first analytics, backups, and PWA packaging.",
+  "description": "DriveLedger repaired platform-detection release with audited OCR company detection, no exposed secrets found, modern UI, screenshot-first quick add, local-first analytics, backups, and PWA packaging.",
   "scripts": {
     "test": "python -m unittest discover -s tests",
     "syntax": "node --check app.js && node --check service-worker.js",

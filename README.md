@@ -1,3 +1,6 @@
+## Platform detection audit note
+DriveLedger v3.7.5 repairs Claude's v3.7.4 package metadata mismatch and validates expanded OCR platform detection for DoorDash, Uber Eats, Grubhub, Instacart, Spark, Roadie, and Catering. See `PLATFORM_DETECTION_AUDIT.md`.
+
 ## 3.7.3 Claude package repair
 The uploaded Claude ZIP was inspected. The main runtime files matched v3.7.2, but the package was missing `tests/`, `tools/`, and `_redirects`, which broke the test/smoke workflow. This release restores those files and keeps the security-audited runtime intact.
 
