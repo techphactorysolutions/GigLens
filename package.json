@@ -1,8 +1,8 @@
 {
   "name": "driveledger-pwa",
-  "version": "3.8.0",
+  "version": "3.9.0",
   "private": true,
-  "description": "DriveLedger premium local-first driver command center with earnings, mileage, profit, tax, platform and zone analytics, OCR capture, and persistent order decision tracking.",
+  "description": "DriveLedger premium local-first driver command center with earnings, mileage, profit, tax, platform and zone analytics, app-specific OCR capture, paused-shift tracking, and persistent order decision tracking.",
   "scripts": {
     "test": "python -m unittest discover -s tests",
     "syntax": "node --check app.js && node --check service-worker.js",

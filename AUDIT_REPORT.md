@@ -1,3 +1,35 @@
+## 3.9.0 app-specific OCR and paused-shift audit
+
+Scope: targeted upgrade of the existing static/local-first PWA after driver feedback that screenshot OCR was confusing DoorDash and Uber Eats, forcing stores into restaurant labels, and offering no way to take a break without ending the day.
+
+Findings and fixes:
+
+- Finding: broad terms including `dash`, `trip`, `gig`, `catering`, `offer`, and `Walmart` could act as enough platform evidence to choose the wrong company.
+  - Fix: replaced that behavior with a qualification gate. A company is filled only when OCR finds a direct brand/header or a distinctive app workflow; generic terms alone produce `Other`. Conflicting direct evidence remains reviewable instead of being guessed.
+- Finding: the merchant scorer treated retail and grocery pickups as restaurants, and `Walmart` was rejected as an app-related word rather than retained as a store.
+  - Fix: added normalized `merchantType` support, separate known-store patterns, typed `Restaurant:` / `Store:` labels, retail-aware candidate scoring, and Store/Restaurant display labels in the OCR review and History.
+- Finding: shift state only supported active versus ended, so breaks inflated active work time and hourly metrics.
+  - Fix: added `paused`, `pausedAt`, and normalized, de-duplicated `breaks` to `driveledger.shift.v1`. Pause/Resume is wired to the dashboard, active-hours calculations subtract overlapping breaks, and ending while paused closes the open break before recap persistence.
+- Data compatibility: existing delivery, decision, settings, shift, backup/import, rollback, and emergency restore paths are preserved. Delivery migration adds `merchantType` and shift migration adds safe pause defaults. Data schema is now `10`; backup schema is `11`.
+- Static/PWA compatibility: no backend, framework, build step, remote data store, or fake UI was added. The service-worker cache changed to `driveledger-v36-platform-ocr-pause` so deployed clients receive the updated app shell.
+
+Tests run:
+
+```text
+node --check app.js
+node --check service-worker.js
+node tools/smoke-startup.js
+python -m unittest discover -s tests -v
+```
+
+Automated coverage now includes strict platform evidence for DoorDash, Uber Eats, Grubhub, Instacart, Spark, Roadie, and Catering; mixed-identifier and generic-word non-guess cases; restaurant/store OCR examples; legacy type migration; pause/resume wiring; excluded-break active hours; and ending a paused shift.
+
+Remaining risks:
+
+- OCR remains dependent on screenshot quality and Tesseract text extraction. The review card is intentionally editable, and ambiguous screenshots should be corrected before saving.
+- The local classifier recognizes common app vocabulary and known merchant patterns; new layouts, unfamiliar delivery services, stylized local names, and image-only logos may correctly fall back to `Other` rather than infer a risky label.
+- Browser-local data should still be protected with JSON backups. Real iPhone/iPad Safari testing remains recommended for OCR crop quality, pause/resume ergonomics, and share/download behavior.
+
 ## 3.8.0 persistent order decision ledger audit
 
 Scope: incremental upgrade of the uploaded v3.7.5 static PWA to close the core requirement that drivers can track order accept/decline decisions, not only calculate them.

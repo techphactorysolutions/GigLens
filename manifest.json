@@ -1,7 +1,7 @@
 {
   "name": "DriveLedger Driver Command Center",
   "short_name": "DriveLedger",
-  "description": "Designed by Tech Phactory Solutions. Local-first gig-driver command center for earnings, miles, profit, taxes, platform and zone performance, OCR capture, and order decision tracking.",
+  "description": "Designed by Tech Phactory Solutions. Local-first gig-driver command center for earnings, miles, profit, taxes, platform and zone performance, app-specific OCR capture, paused shifts, and order decision tracking.",
   "id": "./",
   "start_url": "./",
   "scope": "./",

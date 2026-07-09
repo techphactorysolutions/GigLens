@@ -56,7 +56,10 @@
           </div>
           <div class="hero-shift-row">
             <span id="heroStatusLabel" class="status-chip">No data yet</span>
-            <button id="heroShiftBtn" class="ghost-btn compact" type="button" aria-label="Start or end today's driving shift from the dashboard">Start Day</button>
+            <div class="hero-shift-actions">
+              <button id="pauseShiftBtn" class="secondary-btn compact" type="button" aria-label="Pause today's driving shift for a break" disabled>Pause</button>
+              <button id="heroShiftBtn" class="ghost-btn compact" type="button" aria-label="Start or end today's driving shift from the dashboard">Start Day</button>
+            </div>
           </div>
           <p id="goalRemaining" class="insight">Set a goal and add your first delivery.</p>
         </section>
@@ -199,7 +202,7 @@
             </div>
             <div class="review-grid readonly-review" aria-label="OCR detection summary">
               <div><span>Company</span><strong id="ocrCompany">—</strong></div>
-              <div><span>Restaurant</span><strong id="ocrMerchant">—</strong></div>
+              <div><span id="ocrMerchantLabel">Restaurant / store</span><strong id="ocrMerchant">—</strong></div>
               <div><span>Earnings</span><strong id="ocrEarnings">—</strong></div>
               <div><span>Miles</span><strong id="ocrMiles">—</strong></div>
               <div><span>Minutes</span><strong id="ocrMinutes">—</strong></div>

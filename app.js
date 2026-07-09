@@ -5,8 +5,8 @@
   const SHIFT_KEY = "driveledger.shift.v1";
   const ROLLBACK_KEY = "driveledger.rollback.v1";
   const LAST_BACKUP_KEY = "driveledger.lastBackup.v1";
-  const DATA_VERSION = 9;
-  const BACKUP_VERSION = 10;
+  const DATA_VERSION = 10;
+  const BACKUP_VERSION = 11;
 
   const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
   const $ = (id) => document.getElementById(id);
@@ -42,10 +42,12 @@
     appDataVersion: DATA_VERSION
   };
 
-  let deliveries = normalizeDeliveries(readJSON(STORE_KEY, []));
-  let decisionLog = normalizeDecisionLog(readJSON(DECISIONS_KEY, []));
-  let settings = normalizeSettings(readJSON(SETTINGS_KEY, {}));
-  let shift = normalizeShift(readJSON(SHIFT_KEY, { active: false, startedAt: null, endedAt: null }));
+  // Storage is normalized inside init(), after all OCR merchant patterns have
+  // been declared. That keeps legacy records with merchant names migration-safe.
+  let deliveries = [];
+  let decisionLog = [];
+  let settings = normalizeSettings({});
+  let shift = { active: false, startedAt: null, endedAt: null, paused: false, pausedAt: null, breaks: [], shiftHistory: [] };
   let lastOCRText = "";
   let lastOCRParsed = null;
   let quickOCRText = "";
@@ -67,6 +69,7 @@
     shiftStatus: $("shiftStatus"),
     heroStatusLabel: $("heroStatusLabel"),
     heroShiftBtn: $("heroShiftBtn"),
+    pauseShiftBtn: $("pauseShiftBtn"),
     paceCard: $("paceCard"),
     paceStatus: $("paceStatus"),
     paceRecommendation: $("paceRecommendation"),
@@ -193,6 +196,7 @@
     ocrReview: $("ocrReview"),
     ocrCompany: $("ocrCompany"),
     ocrMerchant: $("ocrMerchant"),
+    ocrMerchantLabel: $("ocrMerchantLabel"),
     ocrEarnings: $("ocrEarnings"),
     ocrMiles: $("ocrMiles"),
     ocrMinutes: $("ocrMinutes"),
@@ -332,6 +336,8 @@
     const company = allowedCompanies.has(item.company) ? item.company : "Other";
     const minutesRaw = num(item.minutes);
     const merchant = cleanText(item.merchant ?? item.restaurant ?? item.store ?? "", 120);
+    const merchantHint = item.merchantType || item.venueType || (item.store && !item.merchant ? "store" : "");
+    const merchantType = normalizeMerchantType(merchantHint, merchant);
     const notes = cleanText(item.notes ?? item.note ?? "", 500);
     const inferredSource = item.ocrText ? "ocr" : "manual";
     const source = validSources.has(item.source) ? item.source : inferredSource;
@@ -344,7 +350,9 @@
       minutes: minutesRaw > 0 && minutesRaw <= 1440 ? round1(minutesRaw) : 0,
       zone: cleanText(item.zone || "", 80),
       merchant,
+      merchantType,
       restaurant: merchant,
+      store: merchantType === "store" ? merchant : "",
       note: notes,
       notes,
       source,
@@ -433,17 +441,62 @@
     const raw = value && typeof value === "object" ? value : {};
     const startedAt = raw.startedAt && !Number.isNaN(new Date(raw.startedAt).getTime()) ? new Date(raw.startedAt).toISOString() : null;
     const endedAt = raw.endedAt && !Number.isNaN(new Date(raw.endedAt).getTime()) ? new Date(raw.endedAt).toISOString() : null;
+    const active = Boolean(raw.active && startedAt);
+    const rawPausedAt = raw.pausedAt || raw.pauseStartedAt || null;
+    const candidatePausedAt = rawPausedAt && !Number.isNaN(new Date(rawPausedAt).getTime()) ? new Date(rawPausedAt).toISOString() : null;
+    const pausedAt = active && candidatePausedAt && new Date(candidatePausedAt) >= new Date(startedAt) ? candidatePausedAt : null;
+    const paused = Boolean(active && pausedAt && (raw.paused === true || raw.pauseStartedAt));
+    const breaks = normalizeShiftBreaks(raw.breaks || raw.pauseHistory || []);
     const shiftHistory = Array.isArray(raw.shiftHistory)
       ? raw.shiftHistory.map((item) => normalizeShiftHistoryItem(item)).filter(Boolean).slice(-100)
       : [];
     return {
-      active: Boolean(raw.active && startedAt),
+      active,
       startedAt,
       endedAt,
+      paused,
+      pausedAt: paused ? pausedAt : null,
+      breaks,
       lastSummary: cleanText(raw.lastSummary || "", 1000),
       shiftHistory,
       appDataVersion: DATA_VERSION
     };
+  }
+
+  function normalizeShiftBreaks(value) {
+    if (!Array.isArray(value)) return [];
+    const validBreaks = value.map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const startedAt = item.startedAt && !Number.isNaN(new Date(item.startedAt).getTime()) ? new Date(item.startedAt).toISOString() : null;
+      const endedAt = item.endedAt && !Number.isNaN(new Date(item.endedAt).getTime()) ? new Date(item.endedAt).toISOString() : null;
+      if (!startedAt || !endedAt || new Date(endedAt) <= new Date(startedAt)) return null;
+      return { startedAt, endedAt };
+    }).filter(Boolean).sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+    const merged = [];
+    for (const item of validBreaks) {
+      const previous = merged[merged.length - 1];
+      if (!previous || new Date(item.startedAt) > new Date(previous.endedAt)) {
+        merged.push(item);
+      } else if (new Date(item.endedAt) > new Date(previous.endedAt)) {
+        previous.endedAt = item.endedAt;
+      }
+    }
+    return merged.slice(-100);
+  }
+
+  function activeShiftToday() {
+    return Boolean(shift.active && shift.startedAt && isToday(shift.startedAt));
+  }
+
+  function closeCurrentShiftBreak(currentShift, endedAt = new Date().toISOString()) {
+    if (!currentShift?.paused || !currentShift.pausedAt) return { ...currentShift, paused: false, pausedAt: null };
+    const starts = new Date(currentShift.pausedAt);
+    const ends = new Date(endedAt);
+    const breaks = Array.isArray(currentShift.breaks) ? [...currentShift.breaks] : [];
+    if (!Number.isNaN(starts.getTime()) && !Number.isNaN(ends.getTime()) && ends > starts) {
+      breaks.push({ startedAt: starts.toISOString(), endedAt: ends.toISOString() });
+    }
+    return { ...currentShift, paused: false, pausedAt: null, breaks };
   }
 
   function normalizeShiftHistoryItem(item) {
@@ -458,6 +511,7 @@
           miles: round1(num(item.metrics.miles)),
           orders: Math.max(0, Math.round(num(item.metrics.orders))),
           hours: round2(num(item.metrics.hours)),
+          breakMinutes: round1(num(item.metrics.breakMinutes)),
           avgMile: round2(num(item.metrics.avgMile)),
           profitMile: round2(num(item.metrics.profitMile)),
           avgHour: round2(num(item.metrics.avgHour)),
@@ -540,16 +594,25 @@
     else if (todays.length) start = new Date(todays[0].createdAt);
     if (!start) return null;
 
-    let end = new Date();
+    const isPaused = activeShiftToday() && shift.paused && shift.pausedAt;
+    let end = isPaused ? new Date(shift.pausedAt) : new Date();
     if (!shift.active && shift.endedAt && isToday(shift.endedAt)) {
       const ended = new Date(shift.endedAt);
       if (ended > start) end = ended;
     }
-    if (todays.length) {
+    if (!isPaused && todays.length) {
       const lastDelivery = new Date(todays[todays.length - 1].createdAt);
       if (lastDelivery > end) end = lastDelivery;
     }
-    return { start, end };
+    const breakMs = (shift.breaks || []).reduce((sum, item) => {
+      const breakStart = new Date(item.startedAt);
+      const breakEnd = new Date(item.endedAt);
+      if (Number.isNaN(breakStart.getTime()) || Number.isNaN(breakEnd.getTime())) return sum;
+      const overlapStart = Math.max(start.getTime(), breakStart.getTime());
+      const overlapEnd = Math.min(end.getTime(), breakEnd.getTime());
+      return overlapEnd > overlapStart ? sum + (overlapEnd - overlapStart) : sum;
+    }, 0);
+    return { start, end, breakMs, paused: Boolean(isPaused) };
   }
 
   const ProfitEngine = {
@@ -670,13 +733,14 @@
       const avgOrder = orders ? round2(earnings / orders) : 0;
       const avgMile = this.grossDollarPerMile(earnings, miles);
       const profitMile = this.estimatedProfitPerMile(profit, miles, config);
+      const breakMinutes = workWindow ? round1(Math.max(0, Number(workWindow.breakMs || 0)) / 60000) : 0;
       const hours = workWindow
-        ? Math.max((workWindow.end - workWindow.start) / 36e5, 1 / 60)
+        ? Math.max(((workWindow.end - workWindow.start) - Number(workWindow.breakMs || 0)) / 36e5, 1 / 60)
         : (minutes ? minutes / 60 : 0);
       const avgHour = hours ? round2(earnings / hours) : 0;
       const profitHour = hours ? round2(profit / hours) : 0;
       const projectedTotal = this.projectedDailyEarnings(earnings, avgHour, hours, activeShift);
-      return { earnings, miles, orders, avgOrder, avgMile, profitMile, avgHour, profitHour, hours, profit, expenses, taxDeduction, minutes, projectedTotal };
+      return { earnings, miles, orders, avgOrder, avgMile, profitMile, avgHour, profitHour, hours, breakMinutes, profit, expenses, taxDeduction, minutes, projectedTotal };
     }
   };
 
@@ -812,6 +876,7 @@
     renderCommandMetrics(todays, c, goal, remaining, score, bestCompany, bestZone, worstCompany, worstZone);
     els.shiftStatus.textContent = shiftStatusText(c.hours);
     els.goalRemaining.textContent = buildGoalInsight(c, goal, remaining);
+    renderShiftButton();
   }
 
   function renderCommandMetrics(todays, c, goal, remaining, score, bestCompany, bestZone, worstCompany = null, worstZone = null) {
@@ -940,7 +1005,8 @@
   }
 
   function shiftStatusText(hours) {
-    if (shift.active && shift.startedAt && isToday(shift.startedAt)) return `Shift active · ${formatHours(hours)}`;
+    if (activeShiftToday() && shift.paused) return `On break · ${formatHours(hours)} active`;
+    if (activeShiftToday()) return `Shift active · ${formatHours(hours)}`;
     if (shift.endedAt && isToday(shift.endedAt)) return `Shift ended · ${formatHours(hours)}`;
     return "No active shift";
   }
@@ -1013,6 +1079,7 @@
         earnings: c.earnings,
         profit: c.profit,
         hours: round2(c.hours),
+        breakMinutes: round1(c.breakMinutes),
         miles: c.miles,
         orders: c.orders,
         avgHour: c.avgHour,
@@ -1069,6 +1136,7 @@
       `Gross earnings: ${money.format(m.earnings)}`,
       `Estimated profit: ${money.format(m.profit)}`,
       `Hours worked: ${formatHours(m.hours)}`,
+      `Break time: ${formatHours((m.breakMinutes || 0) / 60)}`,
       `Deliveries: ${m.orders}`,
       `Miles: ${Number(m.miles || 0).toFixed(1)}`,
       `Gross/hour: ${money.format(m.avgHour)}`,
@@ -1706,7 +1774,7 @@
           <span><strong>${money.format(profit)}</strong><small>profit</small></span>
         </div>
         <div class="history-meta">${date} · Zone: ${escapeHTML(zoneLabel)} · <span class="source-pill">${escapeHTML(sourceLabel(d.source))}</span></div>
-        ${d.merchant ? `<div class="history-meta merchant-meta">Restaurant: ${escapeHTML(d.merchant)}</div>` : ""}
+        ${d.merchant ? `<div class="history-meta merchant-meta">${merchantTypeLabel(d.merchantType)}: ${escapeHTML(d.merchant)}</div>` : ""}
         ${d.notes ? `<div class="history-meta">${escapeHTML(d.notes)}</div>` : ""}
         <div class="history-actions" aria-label="Delivery actions">
           <button class="mini-btn" data-edit="${escapeHTML(d.id)}" type="button">Edit</button>
@@ -1987,9 +2055,15 @@
   }
 
   function renderShiftButton() {
-    const label = shift.active && shift.startedAt && isToday(shift.startedAt) ? "End Day" : "Start Day";
+    const isActive = activeShiftToday();
+    const label = isActive ? "End Day" : "Start Day";
     els.shiftBtn.textContent = label;
     if (els.heroShiftBtn) els.heroShiftBtn.textContent = label;
+    if (els.pauseShiftBtn) {
+      els.pauseShiftBtn.textContent = isActive && shift.paused ? "Resume" : "Pause";
+      els.pauseShiftBtn.disabled = !isActive;
+      els.pauseShiftBtn.setAttribute("aria-label", isActive && shift.paused ? "Resume today's driving shift" : "Pause today's driving shift for a break");
+    }
   }
 
   function renderDeliveryPreview() {
@@ -2495,7 +2569,7 @@
       if (els.quickOcrDetails) els.quickOcrDetails.classList.remove("hidden");
       if (els.quickClearScanBtn) els.quickClearScanBtn.classList.remove("hidden");
       const label = confidenceLabel(quickOCRParsed.confidence);
-      const merchantText = quickOCRParsed.merchant ? ` Found ${quickOCRParsed.merchant}.` : " Restaurant needs review.";
+      const merchantText = quickOCRParsed.merchant ? ` Found ${merchantTypeLabel(quickOCRParsed.merchantType)}: ${quickOCRParsed.merchant}.` : " Merchant needs review.";
       const message = label === "Needs review"
         ? `Scan complete, but confidence is low.${merchantText} Review the fields before saving.`
         : `Scan complete.${merchantText} Review and save.`;
@@ -2522,6 +2596,8 @@
     const minutes = readQuickNumber(els.quickMinutesInput, "minutes", { required: false, allowZero: true });
     if (minutes === null) return;
 
+    const merchant = cleanText(els.quickMerchantInput?.value || "", 120);
+    const merchantType = quickOCRParsed?.merchant === merchant ? quickOCRParsed.merchantType : "";
     const now = new Date().toISOString();
     const delivery = normalizeDelivery({
       id: makeId(),
@@ -2530,7 +2606,8 @@
       miles,
       minutes,
       zone: els.quickZoneInput.value || settings.defaultZone || "",
-      merchant: els.quickMerchantInput?.value || "",
+      merchant,
+      merchantType,
       notes: els.quickNotesInput.value,
       source: quickOCRText ? "ocr" : "manual",
       ocrText: quickOCRText,
@@ -2622,8 +2699,9 @@
         ? `${parsed.platform} (matched ${evidence.join(", ")})`
         : parsed.platform;
     } else {
-      els.ocrCompany.textContent = "Needs review";
+      els.ocrCompany.textContent = parsed.platformReason ? `Needs review (${parsed.platformReason})` : "Needs review";
     }
+    if (els.ocrMerchantLabel) els.ocrMerchantLabel.textContent = parsed.merchant ? merchantTypeLabel(parsed.merchantType) : "Restaurant / store";
     if (els.ocrMerchant) els.ocrMerchant.textContent = parsed.merchant || "Needs review";
     els.ocrEarnings.textContent = parsed.earnings ? money.format(parsed.earnings) : "Needs review";
     els.ocrMiles.textContent = parsed.miles ? `${parsed.miles.toFixed(1)} mi` : "Needs review";
@@ -2696,7 +2774,10 @@
       flagInvalid(els.ocrMinutesInput);
       return null;
     }
-    return { company, earnings, miles, minutes, merchant };
+    const merchantType = lastOCRParsed?.merchant === merchant
+      ? lastOCRParsed.merchantType
+      : normalizeMerchantType("", merchant);
+    return { company, earnings, miles, minutes, merchant, merchantType };
   }
 
   function saveReviewedOCR() {
@@ -2712,6 +2793,7 @@
       minutes: reviewed.minutes,
       zone: els.zoneInput.value || settings.defaultZone || "",
       merchant: reviewed.merchant,
+      merchantType: reviewed.merchantType,
       notes: els.notesInput.value || reviewed.merchant,
       source: "ocr",
       ocrText: lastOCRText,
@@ -2736,6 +2818,7 @@
     els.ocrDetails.classList.add("hidden");
     els.ocrText.textContent = "";
     els.ocrCompany.textContent = "—";
+    if (els.ocrMerchantLabel) els.ocrMerchantLabel.textContent = "Restaurant / store";
     if (els.ocrMerchant) els.ocrMerchant.textContent = "—";
     els.ocrEarnings.textContent = "—";
     els.ocrMiles.textContent = "—";
@@ -2772,7 +2855,8 @@
     const earnings = detectEarnings(normalized);
     const miles = detectMiles(normalized);
     const minutes = detectMinutes(normalized);
-    const merchant = detectMerchant(lines, normalized, platform);
+    const merchantResult = detectMerchantDetailed(lines, normalized, platform);
+    const merchant = merchantResult.merchant;
     // Weight the platform's contribution to overall confidence by how sure the
     // fingerprint match was, so a strong brand hit boosts more than a weak guess.
     let confidence = 15;
@@ -2785,7 +2869,9 @@
       platform,
       platformConfidence: platformResult.platformConfidence,
       platformEvidence: platformResult.evidence,
+      platformReason: platformResult.reason || "",
       merchant,
+      merchantType: merchantResult.merchantType,
       restaurant: merchant,
       earnings,
       miles,
@@ -2869,6 +2955,50 @@
     return "";
   }
 
+  const knownStorePatterns = [
+    [/\bwalmart(?:\s+supercenter)?\b/i, "Walmart"], [/\btarget\b/i, "Target"], [/\bcostco\b/i, "Costco"], [/sam'?s\s*club/i, "Sam's Club"],
+    [/\baldi\b/i, "ALDI"], [/\bkroger\b/i, "Kroger"], [/\bschnucks\b/i, "Schnucks"], [/\bsafeway\b/i, "Safeway"],
+    [/\balbertsons\b/i, "Albertsons"], [/\bpublix\b/i, "Publix"], [/\bmeijer\b/i, "Meijer"], [/\bh[\-. ]?e[\-. ]?b\b/i, "H-E-B"],
+    [/\bwegmans\b/i, "Wegmans"], [/\bwhole\s*foods\b/i, "Whole Foods Market"], [/trader\s*joe'?s/i, "Trader Joe's"],
+    [/\bcvs\b/i, "CVS"], [/\bwalgreens\b/i, "Walgreens"], [/\brite\s*aid\b/i, "Rite Aid"],
+    [/\bdollar\s*general\b/i, "Dollar General"], [/\bdollar\s*tree\b/i, "Dollar Tree"], [/7[\s-]?eleven/i, "7-Eleven"],
+    [/\bbest\s*buy\b/i, "Best Buy"], [/\bhome\s*depot\b/i, "The Home Depot"], [/\blowe'?s\b/i, "Lowe's"],
+    [/\bstaples\b/i, "Staples"], [/\boffice\s*depot\b/i, "Office Depot"], [/\bpetsmart\b/i, "PetSmart"], [/\bpetco\b/i, "Petco"],
+    [/\bautozone\b/i, "AutoZone"], [/o['’]?reilly\s*auto/i, "O'Reilly Auto Parts"], [/advance\s*auto/i, "Advance Auto Parts"],
+    [/\bmenards\b/i, "Menards"], [/\bikea\b/i, "IKEA"], [/\bmichaels\b/i, "Michaels"], [/\bulta\b/i, "Ulta Beauty"],
+    [/\bsephora\b/i, "Sephora"], [/dick'?s\s*sporting/i, "Dick's Sporting Goods"]
+  ];
+
+  function detectKnownStore(text) {
+    const source = String(text || "");
+    for (const [pattern, label] of knownStorePatterns) {
+      if (pattern.test(source)) return label;
+    }
+    return "";
+  }
+
+  function normalizeMerchantType(value, merchant, context = "") {
+    const type = cleanText(value || "", 20).toLowerCase();
+    if (["restaurant", "store", "merchant"].includes(type)) return type;
+    return inferMerchantType(merchant, context);
+  }
+
+  function inferMerchantType(value, context = "") {
+    const source = `${String(value || "")} ${String(context || "")}`;
+    if (!cleanText(value || "", 120)) return "merchant";
+    if (detectKnownStore(source)) return "store";
+    if (detectKnownRestaurant(source)) return "restaurant";
+    if (/\b(?:store|shop|retail|grocery|supermarket|supercenter|pharmacy|warehouse|department)\b/i.test(source)) return "store";
+    if (/\b(?:cafe|cafÃ©|coffee|pizza|taco|burger|grill|kitchen|deli|wings|bbq|barbecue|sushi|thai|mexican|chicken|subs?|sandwich|noodle|ramen|bakery|bistro|restaurant|steak|seafood|gyro|pasta|pub|bar\b|taqueria|cantina|smokehouse|diner|waffle|pancake|donut|doughnut)\b/i.test(source)) return "restaurant";
+    return "merchant";
+  }
+
+  function merchantTypeLabel(type) {
+    if (type === "store") return "Store";
+    if (type === "restaurant") return "Restaurant";
+    return "Merchant";
+  }
+
   function looksLikeAddress(value) {
     const text = String(value || "").trim();
     return /\b\d{1,6}\s+[A-Za-z0-9.'\-\s]+\b(?:st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|ct|court|pl|place|pkwy|parkway|way|hwy|highway)\b/i.test(text)
@@ -2881,7 +3011,7 @@
   }
 
   function platformRegex() {
-    return /(doordash|door\s*dash|dashpass|uber\s*eats|ubereats|grubhub|grub\s*hub|instacart|spark|walmart|roadie|ezcater)/i;
+    return /(doordash|door\s*dash|dashpass|uber\s*eats|ubereats|grubhub|grub\s*hub|instacart|spark\s*driver|roadie|ezcater|catervalley|deliverthat|dlivrd)/i;
   }
 
   function isMerchantCandidate(value) {
@@ -2895,15 +3025,23 @@
     return true;
   }
 
-  function addMerchantCandidate(candidates, value, score, reason, index = 999) {
+  function addMerchantCandidate(candidates, value, score, reason, index = 999, typeHint = "") {
     const cleaned = cleanMerchantName(value);
     if (!isMerchantCandidate(cleaned)) return;
-    const known = detectKnownRestaurant(cleaned);
-    const finalValue = known || cleaned;
+    const knownRestaurant = detectKnownRestaurant(cleaned);
+    const knownStore = detectKnownStore(cleaned);
+    const finalValue = knownStore || knownRestaurant || cleaned;
+    const merchantType = knownStore
+      ? "store"
+      : knownRestaurant
+        ? "restaurant"
+        : typeHint === "merchant"
+          ? inferMerchantType(finalValue, `${reason} ${value}`)
+          : normalizeMerchantType(typeHint, finalValue, `${reason} ${value}`);
     const existing = candidates.find((candidate) => candidate.value.toLowerCase() === finalValue.toLowerCase());
-    const candidate = { value: finalValue, score: score + (known ? 6 : 0), reason, index };
+    const candidate = { value: finalValue, merchantType, score: score + (knownStore || knownRestaurant ? 6 : 0), reason, index };
     if (existing) {
-      if (candidate.score > existing.score) Object.assign(existing, candidate);
+      if (candidate.score > existing.score || (candidate.score === existing.score && candidate.merchantType !== "merchant")) Object.assign(existing, candidate);
       return;
     }
     candidates.push(candidate);
@@ -2925,7 +3063,7 @@
     }
   }
 
-  function detectMerchant(lines, normalizedText, platform = "") {
+  function detectMerchantLegacy(lines, normalizedText, platform = "") {
     const known = detectKnownRestaurant(normalizedText);
     const candidates = [];
     if (known) addMerchantCandidate(candidates, known, 18, "known restaurant", 0);
@@ -2965,6 +3103,87 @@
     return candidates[0].value;
   }
 
+  function extractMerchantFromTypedLabels(normalizedText, candidates) {
+    const stopWords = "(?:\\$|total|subtotal|distance|miles?|mi\\b|minutes?|mins?|estimated|guarantee|offer|accept|decline|drop[ -]?off|deliver(?:y)?|customer|order\\s*(?:id|#)|items?|directions?|navigate|address|pickup|pick up|restaurant|merchant|store|shop|retail|grocery)";
+    const merchantText = "([A-Za-z0-9&'.,()\\-\\s]{3,90}?)";
+    const patterns = [
+      { type: "restaurant", reason: "restaurant label", pattern: new RegExp("(?:restaurant|eatery)\\s*(?:name)?\\s*[:\\-]?\\s*" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") },
+      { type: "store", reason: "store label", pattern: new RegExp("(?:store|shop|retail(?:er)?|grocery|pharmacy)\\s*(?:name)?\\s*[:\\-]?\\s*" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") },
+      { type: "merchant", reason: "pickup label", pattern: new RegExp("(?:pickup|pick up|pick-up)\\s*(?:from|at|@|:)\\s*" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") },
+      { type: "merchant", reason: "destination label", pattern: new RegExp("(?:go to|head to|arrive at|navigate to)\\s*" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") },
+      { type: "merchant", reason: "merchant label", pattern: new RegExp("(?:merchant)\\s*(?:name)?\\s*[:\\-]?\\s*" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") },
+      { type: "merchant", reason: "order from label", pattern: new RegExp("(?:order from|from)\\s+" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") }
+    ];
+    for (const item of patterns) {
+      let match;
+      while ((match = item.pattern.exec(normalizedText)) !== null) {
+        addMerchantCandidate(candidates, match[1], 15, item.reason, match.index, item.type);
+      }
+    }
+  }
+
+  function detectMerchantDetailed(lines, normalizedText, platform = "") {
+    const candidates = [];
+    const knownStore = detectKnownStore(normalizedText);
+    const knownRestaurant = detectKnownRestaurant(normalizedText);
+    if (knownStore) addMerchantCandidate(candidates, knownStore, 13, "known store", 0, "store");
+    if (knownRestaurant) addMerchantCandidate(candidates, knownRestaurant, 12, "known restaurant", 0, "restaurant");
+
+    extractMerchantFromTypedLabels(normalizedText, candidates);
+
+    lines.forEach((line, index) => {
+      const cleaned = cleanMerchantName(line);
+      const previous = lines[index - 1] || "";
+      const next = lines[index + 1] || "";
+      const context = `${previous} ${line} ${next}`;
+      const lowerLine = line.toLowerCase();
+      const lowerContext = context.toLowerCase();
+      if (!isMerchantCandidate(cleaned)) return;
+
+      let score = 2;
+      if (/pickup|pick up|pick-up|restaurant|merchant|store|shop|retail|grocery|from|order from|go to|head to|arrive at|navigate to/.test(lowerLine)) score += 10;
+      if (/pickup|pick up|pick-up|restaurant|merchant|store|shop|retail|grocery|from|order from|go to|head to|arrive at|navigate to/.test(lowerContext)) score += 5;
+      if (/cafe|caf(?:e|\u00e9)|coffee|pizza|taco|burger|grill|kitchen|deli|wings|bbq|barbecue|sushi|thai|mexican|chicken|subs?|sandwich|noodle|ramen|bakery|bistro|restaurant|steak|seafood|gyro|pasta|pub|bar\b|taqueria|cantina|smokehouse|diner|waffle|pancake|donut|doughnut/i.test(cleaned)) score += 5;
+      if (/grocery|market|supermarket|supercenter|pharmacy|warehouse|retail|department|electronics|hardware|club\b/i.test(cleaned)) score += 5;
+      if (/[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/.test(cleaned)) score += 2;
+      if (/['&]/.test(cleaned)) score += 1;
+      if (index <= 8) score += Math.max(0, 4 - Math.floor(index / 2));
+      if (platform && new RegExp(platform.replace(/\s+/g, "\\s*"), "i").test(cleaned)) score -= 10;
+
+      const typeHint = /\b(?:store|shop|retail|grocery|pharmacy)\b/i.test(lowerContext)
+        ? "store"
+        : /\b(?:restaurant|eatery)\b/i.test(lowerContext)
+          ? "restaurant"
+          : "merchant";
+      addMerchantCandidate(candidates, cleaned, score, "line/context", index, typeHint);
+
+      if (/^(?:pickup|pick up|pick-up|restaurant|merchant|store|shop|retail|grocery|go to|head to|arrive at|navigate to)\b/i.test(line)) {
+        const labelType = /^(?:store|shop|retail|grocery)\b/i.test(line)
+          ? "store"
+          : /^(?:restaurant|eatery)\b/i.test(line)
+            ? "restaurant"
+            : "merchant";
+        for (let offset = 1; offset <= 3; offset += 1) {
+          const nearby = lines[index + offset];
+          if (!nearby || looksLikeAddress(nearby)) continue;
+          addMerchantCandidate(candidates, nearby, 14 - offset, "near pickup label", index + offset, labelType);
+          break;
+        }
+      }
+    });
+
+    if (!candidates.length) {
+      const merchant = detectMerchantLegacy(lines, normalizedText, platform);
+      return { merchant, merchantType: normalizeMerchantType("", merchant) };
+    }
+    candidates.sort((a, b) => b.score - a.score || a.index - b.index || a.value.length - b.value.length);
+    return { merchant: candidates[0].value, merchantType: candidates[0].merchantType || "merchant" };
+  }
+
+  function detectMerchant(lines, normalizedText, platform = "") {
+    return detectMerchantDetailed(lines, normalizedText, platform).merchant;
+  }
+
   // Each app's driver interface has a distinctive vocabulary, not just a logo.
   // We identify the platform by matching that fingerprint (brand tokens PLUS the
   // UI terminology unique to each app) and scoring the evidence, so a stray
@@ -2972,84 +3191,88 @@
   // Signal format: [regex, weight, humanLabel].
   const platformFingerprints = {
     "DoorDash": [
-      [/\bdoordash\b/i, 10, "DoorDash"],
-      [/\bdoor\s*dash\b/i, 9, "Door Dash"],
-      [/\bdasher\b/i, 8, "Dasher"],
-      [/\bred\s*card\b/i, 7, "Red Card"],
-      [/\bdasher\s*direct\b/i, 7, "DasherDirect"],
+      [/\bdoordash\b/i, 15, "DoorDash"],
+      [/\bdoor\s*dash\b/i, 15, "Door Dash"],
+      [/\bdasher\b/i, 13, "Dasher"],
+      [/\bdasher\s*direct\b/i, 13, "DasherDirect"],
+      [/\bred\s*card\b/i, 10, "Red Card"],
+      [/\bearn\s*by\s*time\b/i, 10, "Earn by Time"],
+      [/\bearn\s*per\s*offer\b/i, 10, "Earn per Offer"],
+      [/\bdash\s*now\b/i, 10, "Dash Now"],
+      [/\bshop\s*(?:&|and)\s*deliver\b/i, 8, "Shop & Deliver"],
       [/\bpeak\s*pay\b/i, 6, "Peak Pay"],
-      [/\bearn\s*by\s*time\b/i, 6, "Earn by Time"],
-      [/\bearn\s*per\s*offer\b/i, 6, "Earn per Offer"],
-      [/\bdash\s*now\b/i, 6, "Dash Now"],
-      [/\bshop\s*(?:&|and)\s*deliver\b/i, 5, "Shop & Deliver"],
-      [/\bfast\s*pay\b/i, 4, "Fast Pay"],
-      [/\bhotspot/i, 3, "hotspots"],
-      [/\bdash\b/i, 3, "Dash"],
-      [/\bguaranteed\b/i, 2, "Guaranteed"],
-      [/\bdecline\b/i, 2, "Decline"]
+      [/\bfast\s*pay\b/i, 5, "Fast Pay"],
+      [/\bhotspot/i, 4, "hotspots"]
     ],
     "Uber Eats": [
-      [/\buber\s*eats\b/i, 10, "Uber Eats"],
-      [/\bubereats\b/i, 10, "UberEats"],
-      [/\buber\s*eats\s*pro\b/i, 8, "Uber Eats Pro"],
-      [/\btrip\s*radar\b/i, 8, "Trip Radar"],
-      [/\baccept\s*request\b/i, 7, "Accept request"],
-      [/\btrip\s*request\b/i, 7, "trip request"],
-      [/\btrip\s*supplement\b/i, 7, "trip supplement"],
-      [/\buber\s*one\b/i, 6, "Uber One"],
-      [/\bdelivery\s*partner\b/i, 5, "delivery partner"],
-      [/\buber\b/i, 5, "Uber"],
-      [/\bincludes?\s*(?:a\s*)?trip\b/i, 4, "included trip"],
-      [/\bgo\s*offline\b/i, 2, "go offline"],
-      [/\btrip\b/i, 2, "Trip"]
+      [/\buber\s*eats\b/i, 15, "Uber Eats"],
+      [/\bubereats\b/i, 15, "UberEats"],
+      [/\buber\s*eats\s*pro\b/i, 13, "Uber Eats Pro"],
+      [/\buber\s*(?:driver|delivery)\b/i, 12, "Uber delivery app"],
+      [/\btrip\s*radar\b/i, 13, "Trip Radar"],
+      [/\btrip\s*request\b/i, 11, "trip request"],
+      [/\btrip\s*supplement\b/i, 10, "trip supplement"],
+      [/\bdelivery\s*request\b/i, 8, "delivery request"],
+      [/\baccept\s*request\b/i, 6, "Accept request"],
+      [/\bdelivery\s*partner\b/i, 6, "delivery partner"],
+      [/\bgo\s*offline\b/i, 3, "go offline"]
     ],
     "Grubhub": [
-      [/\bgrubhub\b/i, 10, "Grubhub"],
-      [/\bgrub\s*hub\b/i, 9, "Grub Hub"],
-      [/\baccept\s*offer\b/i, 7, "Accept offer"],
-      [/\bdiner\b/i, 7, "diner"],
-      [/\bgrubhub\s*\+/i, 5, "Grubhub+"],
-      [/\bscheduled?\s*block/i, 4, "scheduled block"],
-      [/\btoolkit\b/i, 3, "toolkit"],
-      [/\bblock\b/i, 3, "block scheduling"],
-      [/\bcatering\b/i, 3, "Catering"],
-      [/\bcare\b/i, 2, "Grubhub Care"]
+      [/\bgrubhub\b/i, 15, "Grubhub"],
+      [/\bgrub\s*hub\b/i, 15, "Grub Hub"],
+      [/\bgrubhub\s*\+/i, 12, "Grubhub+"],
+      [/\bscheduled?\s*block/i, 10, "scheduled block"],
+      [/\baccept\s*offer\b/i, 5, "Accept offer"],
+      [/\bdiner\b/i, 4, "diner"],
+      [/\btoolkit\b/i, 4, "toolkit"]
     ],
     "Instacart": [
-      [/\binstacart\b/i, 10, "Instacart"],
-      [/\bfull[-\s]*service\s*(?:shop|batch)/i, 6, "full-service batch"],
-      [/\bshopper\b/i, 5, "shopper"],
-      [/\bbatch\b/i, 5, "batch"],
-      [/\bitems?\s*to\s*shop\b/i, 4, "items to shop"],
+      [/\binstacart\b/i, 15, "Instacart"],
+      [/\bfull[-\s]*service\s*(?:shop|batch)/i, 13, "full-service batch"],
+      [/\bitems?\s*to\s*shop\b/i, 8, "items to shop"],
+      [/\bshopper\b/i, 6, "shopper"],
+      [/\bbatch\b/i, 3, "batch"],
       [/\breplacement/i, 3, "replacements"],
       [/\bpick\s*&?\s*pack/i, 3, "pick & pack"]
     ],
     "Spark": [
-      [/\bspark\s*driver\b/i, 10, "Spark Driver"],
-      [/\bwalmart\b/i, 7, "Walmart"],
-      [/\bspark\b/i, 6, "Spark"],
-      [/\bround\s*robin\b/i, 4, "Round Robin"],
-      [/\bcurbside\b/i, 3, "curbside"]
+      [/\bspark\s*driver\b/i, 15, "Spark Driver"],
+      [/\bround\s*robin\b/i, 10, "Round Robin"],
+      [/\bexpress\s*delivery\b/i, 7, "express delivery"],
+      [/\bwalmart\b/i, 3, "Walmart"],
+      [/\bspark\b/i, 2, "Spark"],
+      [/\bcurbside\b/i, 2, "curbside"]
     ],
     "Roadie": [
-      [/\broadie\b/i, 10, "Roadie"],
-      [/\bgig\b/i, 2, "gig"]
+      [/\broadie\b/i, 15, "Roadie"],
+      [/\bbundled\s*gig\b/i, 10, "bundled gig"],
+      [/\broute\s*stops?\b/i, 8, "route stops"],
+      [/\bgig\b/i, 1, "gig"]
     ],
     "Catering": [
-      [/\bezcater\b/i, 9, "ezCater"],
-      [/\bcater\s*valley\b/i, 8, "CaterValley"],
-      [/\bcatering\s*order\b/i, 6, "catering order"],
-      [/\bcatering\b/i, 6, "Catering"]
+      [/\bezcater\b/i, 15, "ezCater"],
+      [/\bcater\s*valley\b/i, 15, "CaterValley"],
+      [/\bdeliverthat\b/i, 15, "DeliverThat"],
+      [/\bdlivrd\b/i, 15, "dlivrd"],
+      [/\bcatering\s*(?:order|delivery)\b/i, 5, "catering order"],
+      [/\bcatering\b/i, 1, "catering"]
     ]
   };
 
-  // When a competitor hallmark appears, actively argue against the other apps so
-  // a close, low-evidence call doesn't tip the wrong way.
-  const platformCrossPenalties = [
-    [/\bdiner\b/i, { "Uber Eats": -3, "DoorDash": -3 }],
-    [/\bdasher\b/i, { "Uber Eats": -4, "Grubhub": -4 }],
-    [/\btrip\s*(?:request|radar)\b/i, { "DoorDash": -3, "Grubhub": -3 }]
-  ];
+  // Each profile is qualified independently below. We deliberately do not
+  // subtract points for a stray competitor word: a real brand/header match
+  // should still win over OCR noise from another app name or generic phrase.
+  const platformCrossPenalties = [];
+
+  const platformBrandLabels = {
+    "DoorDash": new Set(["DoorDash", "Door Dash"]),
+    "Uber Eats": new Set(["Uber Eats", "UberEats", "Uber Eats Pro", "Uber delivery app"]),
+    "Grubhub": new Set(["Grubhub", "Grub Hub", "Grubhub+"]),
+    "Instacart": new Set(["Instacart"]),
+    "Spark": new Set(["Spark Driver"]),
+    "Roadie": new Set(["Roadie"]),
+    "Catering": new Set(["ezCater", "CaterValley", "DeliverThat", "dlivrd"])
+  };
 
   function detectPlatformDetailed(text) {
     const source = String(text || "");
@@ -3077,22 +3300,57 @@
       }
     }
 
-    const ranked = Object.entries(scores).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]);
-    if (!ranked.length) return { platform: "", platformConfidence: 0, evidence: [], scores };
+    const candidates = Object.entries(scores)
+      .filter(([, score]) => score > 0)
+      .map(([platform, score]) => {
+        const hits = evidenceByPlatform[platform] || [];
+        const strongHits = hits.filter((hit) => hit.weight >= 10);
+        const mediumHits = hits.filter((hit) => hit.weight >= 5);
+        return {
+          platform,
+          score,
+          hits,
+          hasBrandEvidence: hits.some((hit) => platformBrandLabels[platform]?.has(hit.label)),
+          hasStrongEvidence: strongHits.length > 0,
+          hasCombinedEvidence: mediumHits.length >= 2 && mediumHits.reduce((sum, hit) => sum + hit.weight, 0) >= 12
+        };
+      });
+    if (!candidates.length) return { platform: "", platformConfidence: 0, evidence: [], scores, reason: "No platform evidence found" };
 
-    const [topPlatform, topScore] = ranked[0];
-    const runnerUp = ranked[1] ? ranked[1][1] : 0;
-    const margin = topScore - runnerUp;
-    let confidence = Math.min(99, Math.round(
-      Math.min(topScore, 12) / 12 * 65 + Math.min(margin, 10) / 10 * 34
-    ));
-    const hasBrandHit = (evidenceByPlatform[topPlatform] || []).some((h) => h.weight >= 9);
-    if (hasBrandHit) confidence = Math.max(confidence, 88);
+    // A platform must have a branded or distinctive workflow signal. Generic
+    // delivery words alone (trip, gig, offer, catering, Walmart, etc.) never
+    // auto-label a screenshot, which is safer than guessing the wrong app.
+    const ranked = candidates
+      .filter((candidate) => candidate.hasStrongEvidence || candidate.hasCombinedEvidence)
+      .sort((a, b) => b.score - a.score);
+    if (!ranked.length) {
+      return { platform: "", platformConfidence: 0, evidence: [], scores, reason: "Only generic delivery terms found" };
+    }
 
-    const evidence = (evidenceByPlatform[topPlatform] || [])
-      .sort((a, b) => b.weight - a.weight)
-      .map((h) => h.label);
-    return { platform: topPlatform, platformConfidence: confidence, evidence, scores };
+    const top = ranked[0];
+    const runnerUp = ranked[1] || null;
+    const margin = top.score - (runnerUp ? runnerUp.score : 0);
+    const topHasBrandEvidence = top.hasBrandEvidence;
+    const runnerHasBrandEvidence = runnerUp && runnerUp.hasBrandEvidence;
+    if (runnerUp && (
+      (topHasBrandEvidence && runnerHasBrandEvidence)
+      || (!topHasBrandEvidence && runnerHasBrandEvidence && margin <= 8)
+      || (!topHasBrandEvidence && !runnerHasBrandEvidence && margin <= 3)
+    )) {
+      return {
+        platform: "",
+        platformConfidence: 0,
+        evidence: top.hits.sort((a, b) => b.weight - a.weight).map((hit) => hit.label),
+        scores,
+        reason: "Conflicting platform evidence"
+      };
+    }
+
+    let confidence = topHasBrandEvidence ? 90 : 74;
+    confidence += Math.min(8, Math.max(0, margin));
+    if (top.hits.length >= 2) confidence += 2;
+    const evidence = top.hits.sort((a, b) => b.weight - a.weight).map((hit) => hit.label);
+    return { platform: top.platform, platformConfidence: Math.min(99, confidence), evidence, scores, reason: "" };
   }
 
   function detectPlatform(text) {
@@ -3183,6 +3441,12 @@
 
     const existingId = els.editDeliveryId.value;
     const existing = existingId ? deliveries.find((d) => d.id === existingId) : null;
+    const merchant = cleanText(els.merchantInput?.value || existing?.merchant || "", 120);
+    const merchantType = lastOCRParsed?.merchant === merchant
+      ? lastOCRParsed.merchantType
+      : existing?.merchant === merchant
+        ? existing.merchantType || ""
+        : "";
     const now = new Date().toISOString();
     const delivery = normalizeDelivery({
       id: existingId || makeId(),
@@ -3191,7 +3455,8 @@
       miles,
       minutes,
       zone: els.zoneInput.value || settings.defaultZone || "",
-      merchant: els.merchantInput?.value || existing?.merchant || "",
+      merchant,
+      merchantType,
       notes: els.notesInput.value,
       source: existing ? existing.source : (lastOCRText ? "ocr" : "manual"),
       ocrText: lastOCRText || existing?.ocrText || "",
@@ -3316,15 +3581,18 @@
   }
 
   function toggleShift() {
-    if (shift.active && shift.startedAt && isToday(shift.startedAt)) {
+    if (activeShiftToday()) {
       const now = new Date().toISOString();
       const todays = todayDeliveries();
-      const recap = buildDriverRecap(todays, calculate(todays), { startedAt: shift.startedAt, endedAt: now });
       shift = normalizeShift({
-        ...shift,
+        ...closeCurrentShiftBreak(shift, now),
         active: false,
         startedAt: shift.startedAt,
         endedAt: now,
+      });
+      const recap = buildDriverRecap(todays, calculate(todays), { startedAt: shift.startedAt, endedAt: now });
+      shift = normalizeShift({
+        ...shift,
         lastSummary: recap.text,
         shiftHistory: [
           ...(shift.shiftHistory || []),
@@ -3342,8 +3610,33 @@
       });
       toast("Day ended. Recap saved to shift history.");
     } else {
-      shift = normalizeShift({ ...shift, active: true, startedAt: new Date().toISOString(), endedAt: null });
+      shift = normalizeShift({
+        ...shift,
+        active: true,
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+        paused: false,
+        pausedAt: null,
+        breaks: []
+      });
       toast("Day started. The clock is running.");
+    }
+    writeJSON(SHIFT_KEY, shift);
+    render();
+  }
+
+  function togglePause() {
+    if (!activeShiftToday()) {
+      toast("Start Day before pausing your shift.");
+      return;
+    }
+    const now = new Date().toISOString();
+    if (shift.paused) {
+      shift = normalizeShift(closeCurrentShiftBreak(shift, now));
+      toast("Break ended. Your active shift clock is running again.");
+    } else {
+      shift = normalizeShift({ ...shift, paused: true, pausedAt: now });
+      toast("Shift paused. Break time is excluded from active hours.");
     }
     writeJSON(SHIFT_KEY, shift);
     render();
@@ -3499,10 +3792,10 @@
       savedAt: new Date().toISOString(),
       reason,
       schema: {
-        delivery: ["id", "date", "createdAt", "updatedAt", "company", "merchant", "restaurant", "earnings", "miles", "minutes", "zone", "note", "notes", "source", "ocrText", "ocrConfidence", "tags", "deleted", "version"],
+        delivery: ["id", "date", "createdAt", "updatedAt", "company", "merchant", "merchantType", "restaurant", "store", "earnings", "miles", "minutes", "zone", "note", "notes", "source", "ocrText", "ocrConfidence", "tags", "deleted", "version"],
         decision: ["id", "outcome", "company", "zone", "pay", "miles", "minutes", "note", "source", "createdAt", "version"],
         settings: ["dailyGoal", "defaultCompany", "defaultZone", "gasPrice", "vehicleMpg", "maintenanceCostPerMile", "mileageDeductionRate", "minimumDollarPerMile", "minimumDollarPerHour", "minimumPayout", "maxMiles", "customZones", "theme", "appDataVersion"],
-        shift: ["active", "startedAt", "endedAt", "lastSummary", "shiftHistory", "recommendation", "metrics", "appDataVersion"]
+        shift: ["active", "startedAt", "endedAt", "paused", "pausedAt", "breaks", "lastSummary", "shiftHistory", "recommendation", "metrics", "appDataVersion"]
       },
       settings,
       shift,
@@ -3907,6 +4200,7 @@
     els.copySummaryBtn.addEventListener("click", copySummary);
     els.shiftBtn.addEventListener("click", toggleShift);
     if (els.heroShiftBtn) els.heroShiftBtn.addEventListener("click", toggleShift);
+    if (els.pauseShiftBtn) els.pauseShiftBtn.addEventListener("click", togglePause);
     els.toast.addEventListener("click", (event) => {
       if (event.target.closest("[data-toast-action]") && toastAction) {
         const action = toastAction;
@@ -3984,6 +4278,10 @@
   }
 
   function init() {
+    deliveries = normalizeDeliveries(readJSON(STORE_KEY, []));
+    decisionLog = normalizeDecisionLog(readJSON(DECISIONS_KEY, []));
+    settings = normalizeSettings(readJSON(SETTINGS_KEY, {}));
+    shift = normalizeShift(readJSON(SHIFT_KEY, { active: false, startedAt: null, endedAt: null }));
     persistNormalizedState();
     els.companyInput.value = settings.defaultCompany;
     els.offerCompanyInput.value = settings.defaultCompany;

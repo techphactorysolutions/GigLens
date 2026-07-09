@@ -1,3 +1,13 @@
+## 3.9.0 app-specific OCR and paused shifts
+
+This release fixes two real driver-workflow gaps without changing DriveLedger's static, local-first architecture. Screenshot classification now requires direct app branding or a distinctive app workflow before it fills in a company. Ordinary delivery words such as `trip`, `gig`, `offer`, `catering`, or `Walmart` no longer silently guess Uber Eats, DoorDash, Roadie, Spark, or Catering. When evidence conflicts or is too weak, the editable review card intentionally leaves Company as `Other` and explains that it needs review.
+
+The OCR merchant parser now distinguishes restaurants from stores. It recognizes common grocery, retail, pharmacy, warehouse, and hardware chains alongside restaurant patterns, applies `Restaurant:` versus `Store:` context, and preserves a normalized `merchantType` (`restaurant`, `store`, or `merchant`) on saved delivery records. Existing deliveries migrate safely by inferring a type where possible; their legacy `merchant` and `restaurant` fields remain intact for compatibility.
+
+Today now has a real **Pause** / **Resume** control. Pausing keeps the day open, freezes active work time, and excludes the break from gross/hour, profit/hour, projected pace, and end-shift recap hours. Completed breaks are saved in the local shift record and included in JSON backup/import/rollback normalization. Ending a paused shift closes its current break before saving the recap.
+
+Release checks cover syntax, visible button wiring, legacy data migration, strict platform evidence, app conflict review, restaurant/store parsing, and paused-break active-hour calculations. No backend, account, cloud service, framework, or build step was added.
+
 ## 3.8.0 persistent order decision ledger
 
 This release completes the command-center loop for order quality. The Accept Calculator can now log every valid ACCEPT, BORDERLINE, or DECLINE recommendation to a separate local-only decision ledger, while **Save as Completed** automatically records the calculator decision alongside the delivery. Today shows the decision count, Decide shows recent decision history and live totals, and the ledger can be exported as CSV.
@@ -27,7 +37,7 @@ DriveLedger is a local-first Progressive Web App for gig delivery drivers. It tr
 
 ## Current release
 
-Version: `3.8.0` persistent order decision ledger, built on the v3.7.5 platform-detection audited release.
+Version: `3.9.0` app-specific screenshot OCR and paused-shift tracking, built on the v3.8.0 persistent decision ledger.
 
 This release preserves the static PWA architecture. There is no backend, database server, framework, build step, or account system. The app runs from plain static files and stores user data locally in the browser.
 
@@ -40,7 +50,7 @@ This release preserves the static PWA architecture. There is no backend, databas
 - Quick Add validation for valid company, earnings greater than 0, miles 0 or greater, and minutes 0 or greater.
 - Quick Add smart defaults using the last saved company/zone, falling back to Settings defaults.
 - Quick Add **Save** and **Save + Add Another** actions with immediate dashboard updates and toast confirmation.
-- Main hero card with gross earnings, estimated profit, daily goal percentage, progress bar, shift status, and an in-card start/end day action.
+- Main hero card with gross earnings, estimated profit, daily goal percentage, progress bar, shift status, real Start/End Day actions, and a real Pause/Resume break control.
 - Pace card with gross/hour, profit/hour, projected today total, goal ETA, and a live pace recommendation.
 - Efficiency card with gross $/mile, profit $/mile, business miles, average delivery value, and order-quality coaching.
 - Tax card with mileage deduction estimate, mileage deduction rate, tracked business miles, estimated vehicle cost, and delivery count.
@@ -49,7 +59,8 @@ This release preserves the static PWA architecture. There is no backend, databas
 - Accept Calculator v2 that recommends **ACCEPT**, **BORDERLINE**, or **DECLINE** using user-defined minimum payout, $/mile, $/hour, max-mile, gas, MPG, and maintenance rules.
 - Accept Calculator v2 shows gross $/mile, gross hourly pace, estimated profit, profit $/mile, profit hourly pace, and pass/fail threshold rows.
 - Accept Calculator supports Calculate Only, Save as Completed, Clear, Copy Decision, zone capture, and optional note capture.
-- Screenshot OCR review-first workflow with editable detected company, earnings, miles, minutes, confidence labels, raw text review, direct save, cancel, and clear actions.
+- Screenshot OCR review-first workflow with strict app-specific evidence for DoorDash, Uber Eats, Grubhub, Instacart, Spark, Roadie, and supported catering services; weak or conflicting evidence stays editable instead of guessing.
+- OCR merchant parsing distinguishes restaurants, grocery/retail/pharmacy stores, and unknown merchants; the review card, history, backups, and normalized delivery records retain the merchant type.
 - Existing Add tab manual delivery entry with optional minutes, zone, notes, and **Save + Add Another** support.
 - Delivery edit, duplicate, delete, and undo-delete support.
 - Grouped History by day with daily totals, estimated profit, total miles, average $/mile, gross/hour where available, tracked time, per-delivery profit details, minutes, zone, source labels, edit, duplicate, delete, and undo-delete actions.
@@ -179,6 +190,7 @@ unsafe NaN / Infinity / undefined / null UI output checks
 
 - DriveLedger stores data in browser `localStorage`; users should export JSON backups regularly.
 - Screenshot OCR depends on the remote Tesseract.js CDN if the library has not already loaded.
+- OCR is still heuristic: cropped, blurry, stylized, or newly redesigned app screenshots may need a manual Company or merchant correction in the review card.
 - Smoke tests use a mocked browser environment, not real iPhone/iPad Safari automation.
 - Profit, tax deduction, vehicle cost, and coaching values are estimates based on user-maintained Settings.
 - Service-worker updates can require one reload cycle before the newest cached shell is active.
@@ -201,6 +213,11 @@ unsafe NaN / Infinity / undefined / null UI output checks
 13. Save Settings, reload, and confirm values persist.
 14. Turn on Airplane Mode after one online load and confirm the cached app shell opens.
 15. Repeat layout checks on iPad Safari.
+16. Scan a DoorDash screenshot containing generic words such as `trip` and confirm it remains DoorDash when its brand/header is present.
+17. Scan an ambiguous or mixed-brand screenshot and confirm Company stays `Other` for review instead of guessing.
+18. Scan a grocery or retail screenshot such as Instacart/Schnucks, Spark/Walmart, or Roadie/Best Buy and confirm the review card says `Store`.
+19. Start a shift, pause for a break, confirm the status changes to `On break`, then resume and confirm the active-hours clock excludes the break.
+20. End a shift while paused, reload, and confirm the saved recap/history persists without counting the final break as active time.
 
 ## Phase 14 PWA Install, Offline, and Release Polish notes
 

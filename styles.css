@@ -196,6 +196,8 @@ input.invalid { border-color: var(--danger); box-shadow: 0 0 0 4px rgba(255,100,
 
 /* Phase 3 command center cards */
 .hero-shift-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.hero-shift-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.hero-shift-actions button:disabled { opacity: .48; cursor: not-allowed; }
 .status-chip { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 0 10px; border-radius: 999px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.1); color: var(--muted); font-size: 12px; font-weight: 900; }
 .command-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
 .command-card { padding: 18px; }
@@ -215,7 +217,7 @@ input.invalid { border-color: var(--danger); box-shadow: 0 0 0 4px rgba(255,100,
 .command-card.status-warning { border-color: rgba(255,209,102,.24); }
 .command-card.status-danger { border-color: rgba(255,100,100,.24); }
 .command-card.status-neutral { border-color: rgba(255,255,255,.1); }
-@media (max-width: 620px) { .command-card-grid { grid-template-columns: 1fr; } .hero-shift-row .ghost-btn { flex: 1; } }
+@media (max-width: 620px) { .command-card-grid { grid-template-columns: 1fr; } .hero-shift-actions { width: 100%; } .hero-shift-actions .ghost-btn, .hero-shift-actions .secondary-btn { flex: 1; } }
 
 /* Phase 4 fast quick-add bottom sheet */
 .sheet-open { overflow: hidden; }
@@ -905,7 +907,7 @@ label { font-size: 14px; }
 .quick-manual-details .quick-field-grid + .quick-field-grid,
 .quick-manual-details .quick-field-grid + details { margin-top: 12px; }
 
-/* 3.8.0 persistent order decision ledger */
+/* 3.9.0 app-specific OCR and paused shifts */
 .decision-log-card { display: grid; gap: 14px; }
 .decision-log-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .decision-log-metrics span { display: grid; gap: 3px; padding: 12px; border-radius: 16px; background: rgba(255,255,255,.055); border: 1px solid rgba(255,255,255,.08); text-align: center; }

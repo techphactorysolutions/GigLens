@@ -29,6 +29,15 @@
 
 # Changelog
 
+## 3.9.0 — App-specific OCR and paused shifts
+
+- Replaced generic OCR platform guessing with strict app-specific evidence for DoorDash, Uber Eats, Grubhub, Instacart, Spark, Roadie, and supported Catering services.
+- Generic words such as `trip`, `gig`, `offer`, `catering`, and `Walmart` no longer auto-label a screenshot; weak or conflicting evidence remains `Other` for review.
+- Added restaurant/store/merchant classification, known retail and grocery patterns, typed pickup labels, normalized `merchantType`, and Store/Restaurant labels in OCR review and History.
+- Added real Pause/Resume shift controls. Break time is persisted locally and excluded from active time, hourly performance, pace, projections, and end-shift recap metrics.
+- Extended delivery/shift migrations and backup schemas for `merchantType`, `paused`, `pausedAt`, and `breaks`.
+- Bumped data schema to `10`, backup schema to `11`, package version to `3.9.0`, and service-worker cache to `driveledger-v36-platform-ocr-pause`.
+
 ## 3.8.0 — Persistent order decision ledger
 
 - Added a local-only `driveledger.decisions.v1` ledger for ACCEPT, BORDERLINE, and DECLINE calculator recommendations.
