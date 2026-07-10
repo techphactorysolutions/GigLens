@@ -163,7 +163,7 @@ function runStartup(seedStorage) {
   harness.elements.get('zoneInput').value = 'South City';
   callFirst(form, 'submit', { preventDefault() {} });
 
-  const saved = harness.storage.get('driveledger.deliveries.v1');
+  const saved = harness.storage.get('giglens.deliveries.v1');
   if (!saved || !saved.includes('18.75') || !saved.includes('South City')) {
     throw new Error('manual delivery save did not persist full delivery details to localStorage');
   }
@@ -198,7 +198,7 @@ function runStartup(seedStorage) {
   harness.elements.get('quickMinutesInput').value = '20';
   harness.elements.get('quickZoneInput').value = 'South City';
   callFirst(harness.elements.get('quickAddForm'), 'submit', { preventDefault() {} });
-  const savedAfterQuick = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  const savedAfterQuick = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   if (!savedAfterQuick.some((d) => d.earnings === 15.25 && d.miles === 0 && d.zone === 'South City' && d.source === 'manual')) {
     throw new Error('quick add did not persist a zero-mile delivery with metadata');
   }
@@ -212,9 +212,9 @@ function runStartup(seedStorage) {
   callFirst(quickOpen, 'click', {});
   harness.elements.get('quickEarningsInput').value = '0';
   harness.elements.get('quickMilesInput').value = '2';
-  const beforeInvalidQuick = JSON.parse(harness.storage.get('driveledger.deliveries.v1')).length;
+  const beforeInvalidQuick = JSON.parse(harness.storage.get('giglens.deliveries.v1')).length;
   callFirst(harness.elements.get('quickAddForm'), 'submit', { preventDefault() {} });
-  const afterInvalidQuick = JSON.parse(harness.storage.get('driveledger.deliveries.v1')).length;
+  const afterInvalidQuick = JSON.parse(harness.storage.get('giglens.deliveries.v1')).length;
   if (afterInvalidQuick !== beforeInvalidQuick || !harness.elements.get('toast').textContent.includes('earnings')) {
     throw new Error('quick add invalid earnings should be rejected without saving');
   }
@@ -226,7 +226,7 @@ function runStartup(seedStorage) {
   harness.elements.get('minutesInput').value = '18';
   harness.elements.get('zoneInput').value = 'Tower Grove';
   callFirst(harness.elements.get('saveAddAnotherBtn'), 'click', {});
-  const afterAddAnother = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  const afterAddAnother = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   if (afterAddAnother.length < 2 || !afterAddAnother.some((d) => d.zone === 'Tower Grove')) {
     throw new Error('save + add another did not persist a second delivery');
   }
@@ -240,7 +240,7 @@ function runStartup(seedStorage) {
     throw new Error('accept calculator did not render an ACCEPT decision for a strong offer');
   }
   callFirst(harness.elements.get('saveOfferAsDeliveryBtn'), 'click', {});
-  const savedAfterOffer = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  const savedAfterOffer = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   if (savedAfterOffer.length < 3) throw new Error('save offer as delivery did not persist');
   if (!savedAfterOffer.some((d) => d.source === 'calculator' && d.zone === 'Kirkwood')) {
     throw new Error('calculator delivery did not persist source and zone metadata');
@@ -250,11 +250,11 @@ function runStartup(seedStorage) {
     throw new Error('hero shift action is not wired');
   }
   callFirst(harness.elements.get('shiftBtn'), 'click', {});
-  if (!harness.storage.get('driveledger.shift.v1')?.includes('startedAt')) {
+  if (!harness.storage.get('giglens.shift.v1')?.includes('startedAt')) {
     throw new Error('shift toggle did not persist shift state');
   }
   callFirst(harness.elements.get('shiftBtn'), 'click', {});
-  const completedShift = JSON.parse(harness.storage.get('driveledger.shift.v1'));
+  const completedShift = JSON.parse(harness.storage.get('giglens.shift.v1'));
   if (!Array.isArray(completedShift.shiftHistory) || !completedShift.shiftHistory.length || !completedShift.lastSummary) {
     throw new Error('ending a shift did not persist lastSummary and shiftHistory');
   }
@@ -325,9 +325,9 @@ function runMigrationSmoke() {
     'driveledger.shift.v1': JSON.stringify(legacyShift)
   });
   vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
-  const migratedDeliveries = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
-  const migratedSettings = JSON.parse(harness.storage.get('driveledger.settings.v1'));
-  const migratedShift = JSON.parse(harness.storage.get('driveledger.shift.v1'));
+  const migratedDeliveries = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
+  const migratedSettings = JSON.parse(harness.storage.get('giglens.settings.v1'));
+  const migratedShift = JSON.parse(harness.storage.get('giglens.shift.v1'));
 
   if (migratedDeliveries.length !== 1) throw new Error('legacy delivery was not preserved during migration');
   const d = migratedDeliveries[0];
@@ -346,10 +346,10 @@ function runMigrationSmoke() {
   if (migratedSettings.mileageDeductionRate !== 0.7 || migratedSettings.taxMileageRate !== 0.7) {
     throw new Error('settings mileage deduction alias migration failed');
   }
-  if (migratedSettings.defaultCompany !== 'DoorDash' || migratedSettings.theme !== 'system' || migratedSettings.appDataVersion !== 8) {
+  if (migratedSettings.defaultCompany !== 'DoorDash' || migratedSettings.theme !== 'system' || migratedSettings.appDataVersion !== 12) {
     throw new Error('invalid settings were not defaulted during migration');
   }
-  if (!Array.isArray(migratedShift.shiftHistory) || migratedShift.shiftHistory.length !== 1 || migratedShift.appDataVersion !== 8) {
+  if (!Array.isArray(migratedShift.shiftHistory) || migratedShift.shiftHistory.length !== 1 || migratedShift.appDataVersion !== 12) {
     throw new Error('shift history migration failed');
   }
 }
@@ -471,9 +471,9 @@ async function runOCRReviewSmoke() {
     }
   }
 
-  const beforeSave = JSON.parse(harness.storage.get('driveledger.deliveries.v1') || '[]').length;
+  const beforeSave = JSON.parse(harness.storage.get('giglens.deliveries.v1') || '[]').length;
   await callFirst(harness.elements.get('saveOcrBtn'), 'click', {});
-  const saved = JSON.parse(harness.storage.get('driveledger.deliveries.v1') || '[]');
+  const saved = JSON.parse(harness.storage.get('giglens.deliveries.v1') || '[]');
   if (saved.length !== beforeSave + 1) throw new Error('saving reviewed OCR did not persist a delivery');
   const ocrDelivery = saved.find((d) => d.source === 'ocr');
   if (!ocrDelivery || ocrDelivery.company !== 'DoorDash' || ocrDelivery.earnings !== 14.25 || ocrDelivery.miles !== 6.8 || ocrDelivery.minutes !== 31 || !ocrDelivery.ocrText || ocrDelivery.merchant !== 'Chipotle') {
@@ -485,14 +485,31 @@ async function runOCRReviewSmoke() {
   });
   vm.runInNewContext(appCode, lowHarness.context, { filename: 'app.js' });
   await callFirst(lowHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'low.png' }] } });
-  const lowSaved = JSON.parse(lowHarness.storage.get('driveledger.deliveries.v1') || '[]');
+  const lowSaved = JSON.parse(lowHarness.storage.get('giglens.deliveries.v1') || '[]');
   if (lowSaved.length) throw new Error('low-confidence OCR should not autosave');
   if (!lowHarness.elements.get('ocrConfidenceLabel').textContent.includes('Needs review')) {
     throw new Error('low-confidence OCR should be labeled Needs review');
   }
   await callFirst(lowHarness.elements.get('saveOcrBtn'), 'click', {});
-  const lowAfterSaveAttempt = JSON.parse(lowHarness.storage.get('driveledger.deliveries.v1') || '[]');
+  const lowAfterSaveAttempt = JSON.parse(lowHarness.storage.get('giglens.deliveries.v1') || '[]');
   if (lowAfterSaveAttempt.length) throw new Error('invalid low-confidence OCR fields should be rejected when saving');
+
+
+  let workerTerminated = false;
+  const workerOnlyHarness = createHarness({}, {
+    Tesseract: {
+      createWorker: async () => ({
+        recognize: async () => ({ data: { text: 'Uber Eats\nExclusive\nPickup from Burger King\n$9.98\n20 min (3.2 mi) total' } }),
+        terminate: async () => { workerTerminated = true; }
+      })
+    }
+  });
+  vm.runInNewContext(appCode, workerOnlyHarness.context, { filename: 'app.js' });
+  await callFirst(workerOnlyHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'worker-only.png' }] } });
+  if (workerOnlyHarness.elements.get('ocrCompanyInput').value !== 'Uber Eats') {
+    throw new Error('createWorker-only OCR path did not complete or detect Uber Eats');
+  }
+  if (!workerTerminated) throw new Error('createWorker-only OCR path did not terminate its worker');
 
   const failHarness = createHarness({}, {
     console: { ...console, error() {} },
@@ -551,7 +568,7 @@ async function runDecisionAssistantSmoke() {
   if (/NaN|Infinity|undefined|null/.test(html)) throw new Error(`accept decision rendered unsafe value: ${html}`);
 
   await callFirst(harness.elements.get('copyDecisionBtn'), 'click', {});
-  if (!copiedDecision.includes('DriveLedger order decision: ACCEPT') || !copiedDecision.includes('Fast restaurant')) {
+  if (!copiedDecision.includes('GigLens order decision: ACCEPT') || !copiedDecision.includes('Fast restaurant')) {
     throw new Error('copy decision did not include decision summary and note');
   }
 
@@ -572,9 +589,9 @@ async function runDecisionAssistantSmoke() {
   if (/NaN|Infinity|undefined|null/.test(html)) throw new Error(`decline decision rendered unsafe value: ${html}`);
 
   setOffer(harness, { pay: 0, miles: 0, minutes: 0 });
-  const beforeInvalid = JSON.parse(harness.storage.get('driveledger.deliveries.v1') || '[]').length;
+  const beforeInvalid = JSON.parse(harness.storage.get('giglens.deliveries.v1') || '[]').length;
   callFirst(harness.elements.get('saveOfferAsDeliveryBtn'), 'click', {});
-  const afterInvalid = JSON.parse(harness.storage.get('driveledger.deliveries.v1') || '[]').length;
+  const afterInvalid = JSON.parse(harness.storage.get('giglens.deliveries.v1') || '[]').length;
   html = harness.elements.get('decisionResult').innerHTML;
   if (afterInvalid !== beforeInvalid || !html.includes('Enter a valid offer') || !harness.elements.get('toast').textContent.includes('Enter valid pay')) {
     throw new Error('invalid offer should be rejected without saving');
@@ -583,7 +600,7 @@ async function runDecisionAssistantSmoke() {
 
   setOffer(harness, { pay: 13, miles: 4, minutes: 22, company: 'Uber Eats', zone: 'Kirkwood', note: 'Good stack' });
   callFirst(harness.elements.get('saveOfferAsDeliveryBtn'), 'click', {});
-  const saved = JSON.parse(harness.storage.get('driveledger.deliveries.v1') || '[]');
+  const saved = JSON.parse(harness.storage.get('giglens.deliveries.v1') || '[]');
   const calculatorDelivery = saved.find((d) => d.source === 'calculator' && d.company === 'Uber Eats' && d.zone === 'Kirkwood');
   if (!calculatorDelivery || calculatorDelivery.notes !== 'Good stack' || !calculatorDelivery.tags.includes('accept')) {
     throw new Error('save offer did not persist calculator source, note, zone, and decision tag');
@@ -599,7 +616,7 @@ async function runDecisionAssistantSmoke() {
   }
 
   const strictHarness = createHarness({
-    'driveledger.settings.v1': JSON.stringify({ minPerMile: 5, minPerHour: 60, minPayout: 20, maxMiles: 3 })
+    'giglens.settings.v1': JSON.stringify({ minPerMile: 5, minPerHour: 60, minPayout: 20, maxMiles: 3 })
   });
   vm.runInNewContext(appCode, strictHarness.context, { filename: 'app.js' });
   setOffer(strictHarness, { pay: 12, miles: 4, minutes: 20 });
@@ -658,7 +675,7 @@ function runHistoryEditingSmoke() {
     }
   ];
   const harness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify(seedDeliveries)
+    'giglens.deliveries.v1': JSON.stringify(seedDeliveries)
   });
   vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
 
@@ -679,7 +696,7 @@ function runHistoryEditingSmoke() {
   harness.elements.get('minutesInput').value = '25';
   harness.elements.get('zoneInput').value = 'Downtown';
   callFirst(harness.elements.get('deliveryForm'), 'submit', { preventDefault() {} });
-  let saved = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  let saved = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   const edited = saved.find((d) => d.id === 'today-1');
   if (!edited || edited.earnings !== 25.5 || edited.miles !== 5 || edited.minutes !== 25 || edited.zone !== 'Downtown') {
     throw new Error('edit action did not update the saved delivery in localStorage');
@@ -689,7 +706,7 @@ function runHistoryEditingSmoke() {
   }
 
   clickHistoryAction(harness, { duplicate: 'today-1' });
-  saved = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  saved = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   const copies = saved.filter((d) => d.company === 'DoorDash' && d.earnings === 25.5);
   if (copies.length < 2 || new Set(copies.map((d) => d.id)).size !== copies.length) {
     throw new Error('duplicate action should create a separate delivery with a new ID');
@@ -700,7 +717,7 @@ function runHistoryEditingSmoke() {
   }
 
   clickHistoryAction(harness, { delete: 'today-1' });
-  saved = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  saved = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   if (saved.some((d) => d.id === 'today-1')) {
     throw new Error('delete action did not remove the selected delivery');
   }
@@ -710,7 +727,7 @@ function runHistoryEditingSmoke() {
   callFirst(harness.elements.get('toast'), 'click', {
     target: { closest: (selector) => selector === '[data-toast-action]' ? {} : null }
   });
-  saved = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  saved = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   if (!saved.some((d) => d.id === 'today-1')) {
     throw new Error('undo delete did not restore the selected delivery');
   }
@@ -761,7 +778,7 @@ async function runExportCenterSmoke() {
     }
   ];
   const harness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify(seedDeliveries)
+    'giglens.deliveries.v1': JSON.stringify(seedDeliveries)
   });
   vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
 
@@ -800,7 +817,7 @@ async function runExportCenterSmoke() {
   await callFirst(harness.elements.get('backupBtn'), 'click', {});
   text = await harness.downloads.at(-1).text();
   const backup = JSON.parse(text);
-  if (backup.app !== 'DriveLedger' || !backup.exportedAt || !backup.appDataVersion || !Array.isArray(backup.deliveries) || !backup.settings || !backup.shift) {
+  if (backup.app !== 'GigLens' || !backup.exportedAt || !backup.appDataVersion || !Array.isArray(backup.deliveries) || !backup.settings || !backup.shift) {
     throw new Error('backup JSON did not include required metadata, settings, shift, and deliveries');
   }
 
@@ -851,8 +868,8 @@ async function runBackupSafetySmoke() {
   };
 
   const harness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify([previous]),
-    'driveledger.settings.v1': JSON.stringify({ dailyGoal: 175, defaultCompany: 'DoorDash' })
+    'giglens.deliveries.v1': JSON.stringify([previous]),
+    'giglens.settings.v1': JSON.stringify({ dailyGoal: 175, defaultCompany: 'DoorDash' })
   });
   vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
   for (const id of ['importInput', 'importPreview', 'importPreviewMeta', 'importModeInput', 'confirmImportBtn', 'cancelImportBtn', 'restoreRollbackBtn']) {
@@ -867,7 +884,7 @@ async function runBackupSafetySmoke() {
   }
   harness.elements.get('importModeInput').value = 'merge';
   await callFirst(harness.elements.get('confirmImportBtn'), 'click', {});
-  const afterMerge = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  const afterMerge = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   if (afterMerge.length !== 2 || !afterMerge.some((d) => d.id === 'new-import-1') || !afterMerge.some((d) => d.id === 'keep-1' && d.earnings === 10)) {
     throw new Error('merge import should add new deliveries and keep existing duplicate IDs');
   }
@@ -878,15 +895,15 @@ async function runBackupSafetySmoke() {
   await callFirst(harness.elements.get('importInput'), 'change', { target: { files: [{ text: async () => JSON.stringify(backupPayload) }] } });
   harness.elements.get('importModeInput').value = 'replace';
   await callFirst(harness.elements.get('confirmImportBtn'), 'click', {});
-  const afterReplace = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  const afterReplace = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   if (afterReplace.length !== 2 || !afterReplace.some((d) => d.id === 'keep-1' && d.earnings === 99)) {
     throw new Error('replace import did not replace current deliveries with backup records');
   }
-  if (!harness.storage.get('driveledger.rollback.v1')) {
+  if (!harness.storage.get('giglens.rollback.v1')) {
     throw new Error('replace import did not store rollback');
   }
   await callFirst(harness.elements.get('restoreRollbackBtn'), 'click', {});
-  const afterRollback = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  const afterRollback = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   if (afterRollback.length !== 2 || !afterRollback.some((d) => d.id === 'new-import-1')) {
     throw new Error('rollback restore did not restore previous data');
   }
@@ -947,9 +964,9 @@ async function runDriverRecapSmoke() {
   ];
   let copiedText = '';
   const harness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify(deliveries),
-    'driveledger.settings.v1': JSON.stringify({ dailyGoal: 40, minPerMile: 1.5, minPerHour: 20 }),
-    'driveledger.shift.v1': JSON.stringify({ active: true, startedAt: first.toISOString(), endedAt: null, shiftHistory: [] })
+    'giglens.deliveries.v1': JSON.stringify(deliveries),
+    'giglens.settings.v1': JSON.stringify({ dailyGoal: 40, minPerMile: 1.5, minPerHour: 20 }),
+    'giglens.shift.v1': JSON.stringify({ active: true, startedAt: first.toISOString(), endedAt: null, shiftHistory: [] })
   }, {
     navigator: { clipboard: { writeText: async (text) => { copiedText = text; } } }
   });
@@ -977,7 +994,7 @@ async function runDriverRecapSmoke() {
   }
 
   callFirst(harness.elements.get('shiftBtn'), 'click', {});
-  const completedShift = JSON.parse(harness.storage.get('driveledger.shift.v1'));
+  const completedShift = JSON.parse(harness.storage.get('giglens.shift.v1'));
   const savedRecap = completedShift.shiftHistory.at(-1);
   if (!savedRecap || !savedRecap.summary.includes('Weakest delivery') || !savedRecap.recommendation || !savedRecap.metrics || savedRecap.metrics.orders !== 2) {
     throw new Error('end shift did not generate and save a full driver recap with metrics');
@@ -987,7 +1004,7 @@ async function runDriverRecapSmoke() {
   }
 
   const oneDeliveryHarness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify([deliveries[0]])
+    'giglens.deliveries.v1': JSON.stringify([deliveries[0]])
   });
   vm.runInNewContext(appCode, oneDeliveryHarness.context, { filename: 'app.js' });
   if (!oneDeliveryHarness.elements.get('dailySummary').innerHTML.includes('1</strong> delivery')) {
@@ -1033,8 +1050,8 @@ function runPwaOfflinePolishSmoke() {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
   const serviceWorker = fs.readFileSync(path.join(root, 'service-worker.js'), 'utf8');
   const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
-  if (!manifest.name.includes('Driver Command Center') || manifest.short_name !== 'DriveLedger') {
-    throw new Error('manifest should be install-ready with strong name and DriveLedger short name');
+  if (!manifest.name.includes('Driver Command Center') || manifest.short_name !== 'GigLens') {
+    throw new Error('manifest should be install-ready with strong name and GigLens short name');
   }
   if (manifest.display !== 'standalone' || manifest.start_url !== './' || manifest.scope !== './') {
     throw new Error('manifest install fields are not configured for standalone static hosting');
@@ -1043,10 +1060,10 @@ function runPwaOfflinePolishSmoke() {
     if (!fs.existsSync(path.join(root, icon.src))) throw new Error(`manifest icon path missing: ${icon.src}`);
     if (!String(icon.purpose || '').includes('maskable')) throw new Error('manifest icons should include maskable purpose');
   }
-  for (const asset of ['./index.html', './styles.css', './app.js', './manifest.json', './icons/icon-192.png', './icons/icon-512.png']) {
+  for (const asset of ['./index.html', './styles.css', './app.js', './manifest.json', './icons/giglens-icon-192-v401.png', './icons/giglens-icon-512-v401.png', './apple-touch-icon.png']) {
     if (!serviceWorker.includes(`"${asset}"`)) throw new Error(`service worker should cache core app shell assets: ${asset}`);
   }
-  for (const token of ['CACHE_VERSION = "v34-platform-detection-audit-fix"', 'OFFLINE_FALLBACK', 'networkFirst', 'staleWhileRevalidate', 'Tesseract CDN']) {
+  for (const token of ['CACHE_VERSION = "v38-giglens-icon-ocr-repair"', 'OFFLINE_FALLBACK', 'networkFirst', 'staleWhileRevalidate', 'Tesseract CDN']) {
     if (!serviceWorker.includes(token)) throw new Error(`service worker missing PWA offline token: ${token}`);
   }
   if (!html.includes('id="offlineBanner"') || !css.includes('offline-banner')) {
@@ -1082,8 +1099,8 @@ function runSmartGoalSmoke() {
     { id: 'goal-3', company: 'Grubhub', earnings: 110, miles: 31, minutes: 210, zone: 'Clayton', source: 'manual', createdAt: isoDaysAgo(1), updatedAt: isoDaysAgo(1), version: 5 }
   ];
   const harness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify(currentWeekdayDeliveries),
-    'driveledger.settings.v1': JSON.stringify({ dailyGoal: 150 })
+    'giglens.deliveries.v1': JSON.stringify(currentWeekdayDeliveries),
+    'giglens.settings.v1': JSON.stringify({ dailyGoal: 150 })
   });
   vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
 
@@ -1100,7 +1117,7 @@ function runSmartGoalSmoke() {
     throw new Error('smart goal apply/ignore buttons are not wired');
   }
   callFirst(harness.elements.get('applySmartGoalBtn'), 'click', {});
-  const updatedSettings = JSON.parse(harness.storage.get('driveledger.settings.v1'));
+  const updatedSettings = JSON.parse(harness.storage.get('giglens.settings.v1'));
   if (updatedSettings.dailyGoal !== 210) {
     throw new Error(`apply smart goal should update dailyGoal to 210, got ${updatedSettings.dailyGoal}`);
   }
@@ -1110,7 +1127,7 @@ function runSmartGoalSmoke() {
   }
 
   const insufficientHarness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify([
+    'giglens.deliveries.v1': JSON.stringify([
       { id: 'goal-single', company: 'DoorDash', earnings: 180, miles: 42, minutes: 310, zone: 'South City', source: 'manual', createdAt: isoDaysAgo(7), updatedAt: isoDaysAgo(7), version: 5 }
     ])
   });
@@ -1120,7 +1137,7 @@ function runSmartGoalSmoke() {
   }
 
   const todayHarness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify([
+    'giglens.deliveries.v1': JSON.stringify([
       { id: 'goal-today', company: 'DoorDash', earnings: 999, miles: 1, minutes: 5, zone: 'Today', source: 'manual', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), version: 5 }
     ])
   });
@@ -1151,7 +1168,7 @@ function runBestTimeInsightsSmoke() {
     { id: 'time-hist-weak-2', company: 'Spark', earnings: 7, miles: 9, minutes: 45, zone: 'Downtown', source: 'manual', createdAt: isoDaysAgo(3, 9), updatedAt: isoDaysAgo(3, 9), version: 5 }
   ];
   const harness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify(seed)
+    'giglens.deliveries.v1': JSON.stringify(seed)
   });
   vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
 
@@ -1179,7 +1196,7 @@ function runBestTimeInsightsSmoke() {
   }
 
   const insufficientHarness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify([
+    'giglens.deliveries.v1': JSON.stringify([
       { id: 'time-single', company: 'DoorDash', earnings: 20, miles: 5, minutes: 30, zone: 'South City', source: 'manual', createdAt: isoDaysAgo(1, 18), updatedAt: isoDaysAgo(1, 18), version: 5 }
     ])
   });
@@ -1208,8 +1225,8 @@ function runZoneHeatmapSmoke() {
     { id: 'zone-old-1', company: 'Roadie', earnings: 12, miles: 5, minutes: 30, zone: 'Old Saved Zone', source: 'manual', createdAt: now.toISOString(), updatedAt: now.toISOString(), version: 6 }
   ];
   const harness = createHarness({
-    'driveledger.deliveries.v1': JSON.stringify(seed),
-    'driveledger.settings.v1': JSON.stringify({ customZones: ['South City', 'Downtown'], defaultZone: 'South City' })
+    'giglens.deliveries.v1': JSON.stringify(seed),
+    'giglens.settings.v1': JSON.stringify({ customZones: ['South City', 'Downtown'], defaultZone: 'South City' })
   }, { prompt: () => 'Clayton Core' });
   vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
 
@@ -1229,7 +1246,7 @@ function runZoneHeatmapSmoke() {
 
   harness.elements.get('customZoneInput').value = 'Clayton';
   callFirst(harness.elements.get('addCustomZoneBtn'), 'click', {});
-  let savedSettings = JSON.parse(harness.storage.get('driveledger.settings.v1'));
+  let savedSettings = JSON.parse(harness.storage.get('giglens.settings.v1'));
   if (!savedSettings.customZones.includes('Clayton')) {
     throw new Error('adding a custom zone should persist to settings');
   }
@@ -1237,7 +1254,7 @@ function runZoneHeatmapSmoke() {
   callFirst(harness.elements.get('customZoneList'), 'click', {
     target: { closest: (selector) => selector === '[data-zone-rename]' ? { dataset: { zoneRename: 'Clayton' } } : null }
   });
-  savedSettings = JSON.parse(harness.storage.get('driveledger.settings.v1'));
+  savedSettings = JSON.parse(harness.storage.get('giglens.settings.v1'));
   if (!savedSettings.customZones.includes('Clayton Core')) {
     throw new Error('renaming a custom zone should persist the renamed zone');
   }
@@ -1245,11 +1262,11 @@ function runZoneHeatmapSmoke() {
   callFirst(harness.elements.get('customZoneList'), 'click', {
     target: { closest: (selector) => selector === '[data-zone-delete]' ? { dataset: { zoneDelete: 'Downtown' } } : null }
   });
-  savedSettings = JSON.parse(harness.storage.get('driveledger.settings.v1'));
+  savedSettings = JSON.parse(harness.storage.get('giglens.settings.v1'));
   if (savedSettings.customZones.includes('Downtown')) {
     throw new Error('deleting a custom zone should remove it from settings');
   }
-  const savedDeliveries = JSON.parse(harness.storage.get('driveledger.deliveries.v1'));
+  const savedDeliveries = JSON.parse(harness.storage.get('giglens.deliveries.v1'));
   if (!savedDeliveries.some((delivery) => delivery.zone === 'Downtown')) {
     throw new Error('deleting a custom zone should not corrupt saved delivery zone labels');
   }
@@ -1270,9 +1287,9 @@ function runPrivacyDataControlSmoke() {
     { id: 'privacy-1', company: 'DoorDash', earnings: 20, miles: 5, minutes: 30, zone: 'South City', source: 'manual', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), version: 7 }
   ];
   const baseStorage = {
-    'driveledger.deliveries.v1': JSON.stringify(seedDeliveries),
-    'driveledger.settings.v1': JSON.stringify({ dailyGoal: 225, defaultCompany: 'Uber Eats', customZones: ['South City'] }),
-    'driveledger.shift.v1': JSON.stringify({ active: false, startedAt: null, endedAt: null, shiftHistory: [] })
+    'giglens.deliveries.v1': JSON.stringify(seedDeliveries),
+    'giglens.settings.v1': JSON.stringify({ dailyGoal: 225, defaultCompany: 'Uber Eats', customZones: ['South City'] }),
+    'giglens.shift.v1': JSON.stringify({ active: false, startedAt: null, endedAt: null, shiftHistory: [] })
   };
 
   const exportHarness = createHarness(baseStorage);
@@ -1281,30 +1298,30 @@ function runPrivacyDataControlSmoke() {
     if (!exportHarness.elements.get(id)) throw new Error(`privacy center element missing: ${id}`);
   }
   if (!html.includes('localStorage') || !html.includes('There is no account')) {
-    throw new Error('privacy center should explain that DriveLedger data is local-only');
+    throw new Error('privacy center should explain that GigLens data is local-only');
   }
-  if (!exportHarness.elements.get('storageUsageEstimate').innerHTML.includes('estimated DriveLedger localStorage usage')) {
+  if (!exportHarness.elements.get('storageUsageEstimate').innerHTML.includes('estimated GigLens localStorage usage')) {
     throw new Error('privacy center should show a localStorage usage estimate');
   }
   callFirst(exportHarness.elements.get('privacyExportAllBtn'), 'click', {});
-  if (!exportHarness.storage.get('driveledger.lastBackup.v1') || exportHarness.downloads.length < 1) {
+  if (!exportHarness.storage.get('giglens.lastBackup.v1') || exportHarness.downloads.length < 1) {
     throw new Error('Export All Data should save a last-backup snapshot and download JSON');
   }
 
   const resetDeliveriesHarness = createHarness(baseStorage, { prompt: () => 'RESET' });
   vm.runInNewContext(appCode, resetDeliveriesHarness.context, { filename: 'app.js' });
   callFirst(resetDeliveriesHarness.elements.get('resetDeliveriesBtn'), 'click', {});
-  const resetDeliveries = JSON.parse(resetDeliveriesHarness.storage.get('driveledger.deliveries.v1'));
-  const keptSettings = JSON.parse(resetDeliveriesHarness.storage.get('driveledger.settings.v1'));
-  if (resetDeliveries.length !== 0 || keptSettings.dailyGoal !== 225 || !resetDeliveriesHarness.storage.get('driveledger.lastBackup.v1')) {
+  const resetDeliveries = JSON.parse(resetDeliveriesHarness.storage.get('giglens.deliveries.v1'));
+  const keptSettings = JSON.parse(resetDeliveriesHarness.storage.get('giglens.settings.v1'));
+  if (resetDeliveries.length !== 0 || keptSettings.dailyGoal !== 225 || !resetDeliveriesHarness.storage.get('giglens.lastBackup.v1')) {
     throw new Error('Reset Deliveries Only should clear deliveries, keep settings, and store an emergency backup');
   }
 
   const resetSettingsHarness = createHarness(baseStorage, { prompt: () => 'RESET' });
   vm.runInNewContext(appCode, resetSettingsHarness.context, { filename: 'app.js' });
   callFirst(resetSettingsHarness.elements.get('resetSettingsBtn'), 'click', {});
-  const resetSettings = JSON.parse(resetSettingsHarness.storage.get('driveledger.settings.v1'));
-  const keptDeliveries = JSON.parse(resetSettingsHarness.storage.get('driveledger.deliveries.v1'));
+  const resetSettings = JSON.parse(resetSettingsHarness.storage.get('giglens.settings.v1'));
+  const keptDeliveries = JSON.parse(resetSettingsHarness.storage.get('giglens.deliveries.v1'));
   if (resetSettings.dailyGoal !== 200 || resetSettings.defaultCompany !== 'DoorDash' || keptDeliveries.length !== 1) {
     throw new Error('Reset Settings Only should restore defaults while keeping deliveries');
   }
@@ -1312,14 +1329,14 @@ function runPrivacyDataControlSmoke() {
   const clearHarness = createHarness(baseStorage, { prompt: () => 'DELETE' });
   vm.runInNewContext(appCode, clearHarness.context, { filename: 'app.js' });
   callFirst(clearHarness.elements.get('clearAllDataBtn'), 'click', {});
-  const clearedDeliveries = JSON.parse(clearHarness.storage.get('driveledger.deliveries.v1'));
-  const clearedSettings = JSON.parse(clearHarness.storage.get('driveledger.settings.v1'));
-  const clearedShift = JSON.parse(clearHarness.storage.get('driveledger.shift.v1'));
+  const clearedDeliveries = JSON.parse(clearHarness.storage.get('giglens.deliveries.v1'));
+  const clearedSettings = JSON.parse(clearHarness.storage.get('giglens.settings.v1'));
+  const clearedShift = JSON.parse(clearHarness.storage.get('giglens.shift.v1'));
   if (clearedDeliveries.length !== 0 || clearedSettings.dailyGoal !== 200 || clearedShift.active) {
     throw new Error('Clear All Local Data should reset deliveries, settings, and shift state');
   }
   callFirst(clearHarness.elements.get('privacyRestoreSafetyBtn'), 'click', {});
-  const restoredDeliveries = JSON.parse(clearHarness.storage.get('driveledger.deliveries.v1'));
+  const restoredDeliveries = JSON.parse(clearHarness.storage.get('giglens.deliveries.v1'));
   if (restoredDeliveries.length !== 1 || restoredDeliveries[0].id !== 'privacy-1') {
     throw new Error('Emergency Restore Last Backup should restore the pre-clear snapshot');
   }
@@ -1327,7 +1344,7 @@ function runPrivacyDataControlSmoke() {
   const canceledHarness = createHarness(baseStorage, { prompt: () => 'WRONG' });
   vm.runInNewContext(appCode, canceledHarness.context, { filename: 'app.js' });
   callFirst(canceledHarness.elements.get('clearAllDataBtn'), 'click', {});
-  const canceledDeliveries = JSON.parse(canceledHarness.storage.get('driveledger.deliveries.v1'));
+  const canceledDeliveries = JSON.parse(canceledHarness.storage.get('giglens.deliveries.v1'));
   if (canceledDeliveries.length !== 1 || !canceledHarness.elements.get('toast').textContent.includes('canceled')) {
     throw new Error('dangerous privacy actions should require the second typed confirmation');
   }
@@ -1348,7 +1365,7 @@ function runNetlifyReleasePackageSmoke() {
   for (const token of ['Netlify Drop deployment', 'GitHub Pages deployment', 'iPhone install checklist', 'iPad install checklist', 'Offline reload checklist', 'Local data persistence checklist', 'Troubleshooting']) {
     if (!deployment.includes(token)) throw new Error(`DEPLOYMENT.md missing ${token}`);
   }
-  for (const rel of ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '_redirects', '.nojekyll', '404.html', 'DEPLOYMENT.md', 'icons/icon-192.png', 'icons/icon-512.png']) {
+  for (const rel of ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '_redirects', '.nojekyll', '404.html', 'DEPLOYMENT.md', 'icons/giglens-icon-180.png', 'icons/giglens-icon-180-v401.png', 'icons/giglens-icon-192-v401.png', 'icons/giglens-icon-512-v401.png', 'icons/giglens-icon-1024-v401.png', 'apple-touch-icon.png', 'favicon.png']) {
     if (!fs.existsSync(path.join(root, rel))) throw new Error(`Netlify release package missing root asset ${rel}`);
   }
   const runtimeText = ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '_redirects', '404.html']
@@ -1390,7 +1407,7 @@ async function runQuickScreenshotAddSmoke() {
     throw new Error('quick screenshot preview should include merchant and scanned source');
   }
   callFirst(harness.elements.get('quickAddForm'), 'submit', { preventDefault() {} });
-  const saved = JSON.parse(harness.storage.get('driveledger.deliveries.v1') || '[]');
+  const saved = JSON.parse(harness.storage.get('giglens.deliveries.v1') || '[]');
   const ocrDelivery = saved.find((d) => d.source === 'ocr' && d.merchant === 'Seoul Taco');
   if (!ocrDelivery || !ocrDelivery.ocrText.includes('Seoul Taco') || ocrDelivery.ocrConfidence <= 0) {
     throw new Error('quick screenshot flow did not persist an OCR delivery with restaurant and OCR metadata');
@@ -1403,7 +1420,7 @@ async function runQuickScreenshotAddSmoke() {
   if (!offlineHarness.elements.get('quickScanStatus').textContent.includes('OCR library is not loaded yet')) {
     throw new Error('quick screenshot unavailable OCR should not crash and should show a clear message');
   }
-  console.log('3.7.0 modern UI refresh cases passed');
+  console.log('4.0.1 GigLens repair cases passed');
 }
 
 
@@ -1443,9 +1460,9 @@ function runPublicSecretScanSmoke() {
 
 async function main() {
   runStartup({
-    'driveledger.deliveries.v1': '{"not":"an array"}',
-    'driveledger.settings.v1': '{"dailyGoal":"bad","defaultCompany":"Unknown","gasPrice":"NaN"}',
-    'driveledger.shift.v1': '{"active":true,"startedAt":"not a date"}'
+    'giglens.deliveries.v1': '{"not":"an array"}',
+    'giglens.settings.v1': '{"dailyGoal":"bad","defaultCompany":"Unknown","gasPrice":"NaN"}',
+    'giglens.shift.v1': '{"active":true,"startedAt":"not a date"}'
   });
   runClipboardUnavailableSmoke();
   runMigrationSmoke();
@@ -1466,7 +1483,7 @@ async function main() {
   runNetlifyReleasePackageSmoke();
   runFixedOverlayPositionSmoke();
   runPublicSecretScanSmoke();
-  console.log('DriveLedger startup smoke test passed');
+  console.log('GigLens startup smoke test passed');
 }
 
 main().catch((err) => {

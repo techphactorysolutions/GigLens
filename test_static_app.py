@@ -50,7 +50,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         cls.parser.feed(cls.html)
 
     def test_required_package_files_exist(self):
-        for rel in ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', 'icons/icon-192.png', 'icons/icon-512.png', '.nojekyll', '404.html', 'CLAUDE_REVIEW_AUDIT.md']:
+        for rel in ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', 'icons/giglens-icon-180.png', 'icons/giglens-icon-180-v401.png', 'icons/giglens-icon-192-v401.png', 'icons/giglens-icon-512-v401.png', 'icons/giglens-icon-1024-v401.png', 'apple-touch-icon.png', 'favicon.png', '.nojekyll', '404.html', 'CLAUDE_REVIEW_AUDIT.md']:
             self.assertTrue((PROJECT_ROOT / rel).is_file(), f'missing {rel}')
 
     def test_html_referenced_local_assets_exist(self):
@@ -59,7 +59,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
 
     def test_manifest_is_valid_and_icon_paths_exist(self):
         manifest = json.loads((PROJECT_ROOT / 'manifest.json').read_text(encoding='utf-8'))
-        self.assertEqual(manifest.get('short_name'), 'DriveLedger')
+        self.assertEqual(manifest.get('short_name'), 'GigLens')
         self.assertIn('Driver Command Center', manifest.get('name', ''))
         self.assertEqual(manifest.get('display'), 'standalone')
         self.assertIn('standalone', manifest.get('display_override', []))
@@ -82,9 +82,9 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         self.assertIn('./styles.css', cached_assets)
         self.assertIn('./app.js', cached_assets)
         self.assertIn('./manifest.json', cached_assets)
-        self.assertIn('./icons/icon-192.png', cached_assets)
-        self.assertIn('./icons/icon-512.png', cached_assets)
-        self.assertIn('CACHE_VERSION = "v34-platform-detection-audit-fix"', self.service_worker)
+        self.assertIn('./icons/giglens-icon-192-v401.png', cached_assets)
+        self.assertIn('./icons/giglens-icon-512-v401.png', cached_assets)
+        self.assertIn('CACHE_VERSION = "v38-giglens-icon-ocr-repair"', self.service_worker)
         self.assertIn('OFFLINE_FALLBACK = "./index.html"', self.service_worker)
         self.assertIn('networkFirst(request)', self.service_worker)
         self.assertIn('staleWhileRevalidate(request)', self.service_worker)
@@ -179,10 +179,10 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
             )
 
     def test_storage_is_local_and_namespaced(self):
-        self.assertIn('driveledger.deliveries.v1', self.app_js)
-        self.assertIn('driveledger.settings.v1', self.app_js)
-        self.assertIn('driveledger.shift.v1', self.app_js)
-        self.assertIn('driveledger.rollback.v1', self.app_js)
+        self.assertIn('giglens.deliveries.v1', self.app_js)
+        self.assertIn('giglens.settings.v1', self.app_js)
+        self.assertIn('giglens.shift.v1', self.app_js)
+        self.assertIn('giglens.rollback.v1', self.app_js)
         self.assertIn('DATA_VERSION', self.app_js)
         self.assertNotRegex(self.app_js, r'indexedDB\.open\([^)]*[^a-zA-Z]')
         self.assertNotRegex(self.app_js, r'fetch\(["\']/(api|backend)')
@@ -270,8 +270,8 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
 
 
     def test_phase2_storage_schema_and_migration_hooks_exist(self):
-        self.assertIn('const DATA_VERSION = 8', self.app_js)
-        self.assertIn('const BACKUP_VERSION = 9', self.app_js)
+        self.assertIn('const DATA_VERSION = 12', self.app_js)
+        self.assertIn('const BACKUP_VERSION = 13', self.app_js)
         required_delivery_fields = [
             'date:', 'merchant,', 'restaurant:', 'note:', 'notes,', 'tags:', 'deleted:', 'ocrText:', 'ocrConfidence:'
         ]
@@ -544,13 +544,13 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
     def test_phase14_pwa_install_offline_release_polish_exists(self):
         manifest = json.loads((PROJECT_ROOT / 'manifest.json').read_text(encoding='utf-8'))
         combined = self.html + self.app_js + self.service_worker + (PROJECT_ROOT / 'styles.css').read_text(encoding='utf-8')
-        self.assertIn('DriveLedger Driver Command Center', manifest.get('name', ''))
+        self.assertIn('GigLens Driver Command Center', manifest.get('name', ''))
         self.assertIn('local-first gig-driver profit tracker', manifest.get('description', ''))
         self.assertIn('offlineBanner', self.parser.ids)
         for token in [
             'apple-mobile-web-app-capable', 'application-name', 'color-scheme',
             'offline-banner', 'Offline mode is active', 'updateNetworkStatus',
-            'serviceWorker', 'driveledger-v34-platform-detection-audit-fix', 'OFFLINE_FALLBACK',
+            'serviceWorker', 'giglens-v38-giglens-icon-ocr-repair', 'OFFLINE_FALLBACK',
             'cacheCoreAssets', 'deleteOldCaches', 'staleWhileRevalidate',
             'screenshot OCR may need internet', 'OCR library is not loaded yet'
         ]:
@@ -670,7 +670,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
             'Export All Data', 'Emergency Restore Last Backup', 'Clear All Local Data',
             'doubleConfirmDanger', 'storageUsageEstimate', 'saveSafetySnapshot',
             'restoreSafetyBackup', 'resetSettingsOnly', 'resetDeliveriesOnly', 'clearAllLocalData',
-            'driveledger.lastBackup.v1', 'privacy-action-grid'
+            'giglens.lastBackup.v1', 'privacy-action-grid'
         ]:
             self.assertIn(token, combined)
         for name in [
@@ -805,10 +805,46 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         unsafe_override = ".app-shell,\n.toast,\n.quick-add-sheet,\n.bottom-tabs,\n.mobile-action-dock,\n.skip-link { position: relative"
         self.assertNotIn(unsafe_override, css)
 
+
+    def test_giglens_home_screen_icons_are_real_pngs(self):
+        import struct
+        expected = {
+            'apple-touch-icon.png': (180, 180),
+            'icons/giglens-icon-180-v401.png': (180, 180),
+            'icons/giglens-icon-192-v401.png': (192, 192),
+            'icons/giglens-icon-512-v401.png': (512, 512),
+            'icons/giglens-icon-1024-v401.png': (1024, 1024),
+        }
+        for rel, size in expected.items():
+            data = (PROJECT_ROOT / rel).read_bytes()
+            self.assertEqual(data[:8], b'\x89PNG\r\n\x1a\n', f'{rel} is not a PNG')
+            width, height = struct.unpack('>II', data[16:24])
+            self.assertEqual((width, height), size, f'{rel} has wrong dimensions')
+            color_type = data[25]
+            self.assertEqual(color_type, 2, f'{rel} should be an opaque RGB PNG for iOS')
+        self.assertIn('rel="apple-touch-icon" href="./apple-touch-icon.png"', self.html)
+        self.assertIn('giglens-icon-180-v401.png', self.html)
+
+    def test_ocr_worker_has_timeout_progress_and_valid_v5_core_path(self):
+        for token in [
+            'OCR_INIT_TIMEOUT_MS = 20000',
+            'OCR_RECOGNIZE_TIMEOUT_MS = 45000',
+            'function withTimeout',
+            'function formatOCRProgress',
+            'function recognizeScreenshot',
+            'tesseract.js-core@v5.0.0',
+            'worker.terminate()',
+            'Could not scan this screenshot.',
+        ]:
+            self.assertIn(token, self.app_js)
+        self.assertNotIn('tesseract.js-core@5.1.1', self.app_js)
+        self.assertIn("'wasm-unsafe-eval'", self.html)
+        self.assertIn("'wasm-unsafe-eval'", (PROJECT_ROOT / '_headers').read_text(encoding='utf-8'))
+
     def test_v3_release_candidate_metadata_and_docs_exist(self):
         package = json.loads((PROJECT_ROOT / 'package.json').read_text(encoding='utf-8'))
-        self.assertEqual(package.get('version'), '3.7.5')
-        self.assertIn('v34-platform-detection-audit-fix', self.service_worker)
+        self.assertEqual(package.get('version'), '4.0.1')
+        self.assertIn('v38-giglens-icon-ocr-repair', self.service_worker)
         self.assertIn('Designed by Tech Phactory Solutions', self.html)
         self.assertIn('app-credit', self.html)
         self.assertIn('maker-line', self.html)
@@ -820,7 +856,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         for token in ['v3 Release Candidate', 'Manual QA checklist', 'Known limitations', 'GitHub Pages']:
             self.assertIn(token, readme)
         self.assertIn('Final Release Audit', audit)
-        self.assertIn('3.7.5', changelog)
+        self.assertIn('4.0.1', changelog)
 
 
     def test_luxury_refinement_and_restaurant_ocr_exist(self):

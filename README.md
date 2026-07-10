@@ -2,7 +2,13 @@
 
 GigLens is a private, local-first command center for drivers who run several gig apps at once. Its fastest workflow is: take an offer or completed-delivery screenshot, scan it, review the detected app/merchant/pay/miles/time, and save it while the day is still moving. Saved deliveries then power earnings, estimated profit, mileage deduction, hourly pace, platform, zone, shift, and accept/decline analytics.
 
-Current release: `4.0.0`.
+Current release: `4.0.1`.
+
+## 4.0.1 icon and OCR recovery repair
+
+This release fixes missing iPhone Home Screen artwork and screenshot scans that could remain in a loading state. GigLens now ships opaque 180/192/512/1024 PNG icons plus a root Apple touch icon, uses cache-busting icon filenames, and updates the PWA cache. OCR now uses the documented Tesseract.js v5 core directory, includes WebAssembly CSP permission, displays progress, times out safely, terminates its worker, and returns the user to editable manual fields when OCR cannot finish.
+
+After deploying this release on iPhone, delete the old Home Screen shortcut, reload the hosted site in Safari, then use Share → Add to Home Screen again because iOS caches shortcut artwork.
 
 ## 4.0.0 — GigLens rebrand, visual screenshot intelligence, modern UI, and security hardening
 

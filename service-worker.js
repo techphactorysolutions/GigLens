@@ -1,5 +1,5 @@
-const CACHE_VERSION = "v37-giglens-visual-security";
-const CACHE_NAME = "giglens-v37-giglens-visual-security";
+const CACHE_VERSION = "v38-giglens-icon-ocr-repair";
+const CACHE_NAME = "giglens-v38-giglens-icon-ocr-repair";
 const OFFLINE_FALLBACK = "./index.html";
 const CORE_ASSETS = [
   "./",
@@ -8,8 +8,13 @@ const CORE_ASSETS = [
   "./app.js",
   "./manifest.json",
   "./icons/giglens-icon-180.png",
-  "./icons/giglens-icon-192.png",
-  "./icons/giglens-icon-512.png"
+  "./icons/giglens-icon-180-v401.png",
+  "./icons/giglens-icon-192-v401.png",
+  "./icons/giglens-icon-512-v401.png",
+  "./icons/giglens-icon-1024-v401.png",
+  "./apple-touch-icon.png",
+  "./favicon.png",
+  "./404.js"
 ];
 
 async function cacheCoreAssets() {

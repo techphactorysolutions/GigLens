@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.0.1 — Home Screen icon and OCR recovery repair
+
+- Rebuilt the missing GigLens icon set as opaque, exact-size PNG files and added cache-busting 180/192/512/1024 filenames.
+- Added root `apple-touch-icon.png` and `favicon.png` fallbacks for iPhone/Safari.
+- Updated the manifest, HTML icon metadata, and service-worker cache so installed shortcuts receive the real GigLens icon.
+- Fixed the OCR core dependency path from the nonexistent `tesseract.js-core@5.1.1` directory to the documented v5 core path `tesseract.js-core@v5.0.0`.
+- Added WebAssembly CSP permission, OCR initialization/recognition timeouts, progress messages, worker cleanup, and clear failure recovery instead of an endless loading state.
+- Fixed OCR capability detection so either `createWorker` or `recognize` can power a scan.
+- Bumped the package to `4.0.1` and cache to `giglens-v38-giglens-icon-ocr-repair`.
+
 ## 4.0.0 — GigLens
 
 - Renamed the product and brand-bearing namespaces/assets to GigLens, with non-destructive migration from legacy local-storage keys.

@@ -1,11 +1,11 @@
 {
   "name": "giglens-pwa",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "private": true,
-  "description": "GigLens premium local-first multi-app driver command center with screenshot-assisted earnings capture, mileage, profit, tax, platform and zone analytics, paused shifts, and order decisions.",
+  "description": "GigLens repaired PWA release with functional iPhone Home Screen icons, bounded screenshot OCR, screenshot-first entry, local-first analytics, backups, and decision tracking.",
   "scripts": {
     "test": "python -m unittest discover -s tests",
-    "syntax": "node --check app.js && node --check service-worker.js",
+    "syntax": "node --check app.js && node --check service-worker.js && node --check 404.js",
     "smoke": "node tools/smoke-startup.js"
   },
   "dependencies": {},

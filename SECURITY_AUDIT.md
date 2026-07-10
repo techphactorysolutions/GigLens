@@ -1,6 +1,6 @@
-# GigLens v4 Public Security Audit
+# DriveLedger Public Exposure / Secret Scan
 
-Build audited: GigLens v4.0.0
+Build audited: DriveLedger v3.7.3 Claude package repair / public security audit
 
 ## Result
 
@@ -8,35 +8,30 @@ No API keys, passwords, private keys, bearer tokens, GitHub tokens, OpenAI keys,
 
 ## External endpoint found
 
-The public runtime uses one third-party OCR script:
+The public runtime uses one third-party script:
 
-- `https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js`
+- `https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js`
 
-This is used for browser-side OCR loading. No private API key is attached to it. The version is pinned and the exact response is protected by the verified SHA-384 integrity value in `index.html`. Worker/core/language paths are also pinned in `app.js`.
+This is used for browser-side OCR loading. No private API key is attached to it.
 
 ## Public exposure status
 
-No obvious embedded secret prevents publishing the tested files as a static GitHub Pages or Netlify app.
+This app is safe to publish as a static GitHub Pages or Netlify app from a secrets standpoint.
 
 Important operational notes:
 
-- GigLens has no backend account system.
+- DriveLedger has no backend account system.
 - User data is stored in the visitor's browser `localStorage`.
 - Visitors to the public URL do not see your personal local data.
-- Anyone with physical/browser access to your device could see your local GigLens data.
+- Anyone with physical/browser access to your device could see your local DriveLedger data.
 - Users should export JSON backups before clearing browser/site data.
 - Do not add private API keys to `app.js`, `index.html`, or any public static file in the future.
 
-## Implemented controls
+## Future hardening recommendations
 
-- Restrictive Content Security Policy in `index.html` and `_headers`.
-- `object-src 'none'`, `base-uri 'self'`, same-origin form actions, no-referrer policy, MIME sniffing protection, framing denial, and a restrictive permissions policy.
-- Exact Tesseract.js version and Subresource Integrity pin.
-- Service worker ignores cross-origin traffic and caches only known same-origin browser asset classes.
-- No backend, secrets, analytics beacon, remote user database, or dynamic code execution.
-- Automated obvious-secret patterns remain in `tests/test_static_app.py` and `tools/smoke-startup.js`.
-- Private vulnerability reporting and GitHub operational guidance are documented in `SECURITY.md`.
+Before a broader public release, consider:
 
-## Remaining security boundary
-
-No static package can guarantee that a compromised maintainer account, repository administrator, device, browser, or hosting provider can never alter public files. Configure branch protection, least-privilege Pages deployment, two-factor authentication, and review requirements in GitHub. Self-hosting the pinned OCR worker/core/language files would further reduce CDN availability and supply-chain exposure in a future release.
+1. Self-hosting the OCR library instead of loading it from a CDN.
+2. Adding Subresource Integrity if continuing to use a CDN.
+3. Adding a Content Security Policy.
+4. Keeping all future private service credentials on a backend only, never in the frontend.

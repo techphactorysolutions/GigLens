@@ -1,13 +1,11 @@
 (() => {
-  const APP_NAME = "GigLens";
-  const APP_SLUG = "giglens";
   const STORE_KEY = "giglens.deliveries.v1";
   const DECISIONS_KEY = "giglens.decisions.v1";
   const SETTINGS_KEY = "giglens.settings.v1";
   const SHIFT_KEY = "giglens.shift.v1";
   const ROLLBACK_KEY = "giglens.rollback.v1";
   const LAST_BACKUP_KEY = "giglens.lastBackup.v1";
-  const LEGACY_STORAGE_KEYS = {
+  const LEGACY_KEYS = {
     [STORE_KEY]: "driveledger.deliveries.v1",
     [DECISIONS_KEY]: "driveledger.decisions.v1",
     [SETTINGS_KEY]: "driveledger.settings.v1",
@@ -15,13 +13,24 @@
     [ROLLBACK_KEY]: "driveledger.rollback.v1",
     [LAST_BACKUP_KEY]: "driveledger.lastBackup.v1"
   };
-  const DATA_VERSION = 11;
-  const BACKUP_VERSION = 12;
-  const TESSERACT_OPTIONS = Object.freeze({
-    workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js",
-    corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1",
-    langPath: "https://tessdata.projectnaptha.com/4.0.0"
-  });
+  const DATA_VERSION = 12;
+  const BACKUP_VERSION = 13;
+  const OCR_INIT_TIMEOUT_MS = 20000;
+  const OCR_RECOGNIZE_TIMEOUT_MS = 45000;
+
+  function migrateLegacyStorage() {
+    for (const [nextKey, legacyKey] of Object.entries(LEGACY_KEYS)) {
+      try {
+        if (localStorage.getItem(nextKey) == null && localStorage.getItem(legacyKey) != null) {
+          localStorage.setItem(nextKey, localStorage.getItem(legacyKey));
+        }
+      } catch (error) {
+        console.warn("GigLens storage migration skipped", error);
+      }
+    }
+  }
+
+  migrateLegacyStorage();
 
   const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
   const $ = (id) => document.getElementById(id);
@@ -58,12 +67,10 @@
     appDataVersion: DATA_VERSION
   };
 
-  // Storage is normalized inside init(), after all OCR merchant patterns have
-  // been declared. That keeps legacy records with merchant names migration-safe.
-  let deliveries = [];
-  let decisionLog = [];
-  let settings = normalizeSettings({});
-  let shift = { active: false, startedAt: null, endedAt: null, paused: false, pausedAt: null, breaks: [], shiftHistory: [] };
+  let deliveries = normalizeDeliveries(readJSON(STORE_KEY, []));
+  let decisions = normalizeDecisions(readJSON(DECISIONS_KEY, []));
+  let settings = normalizeSettings(readJSON(SETTINGS_KEY, {}));
+  let shift = normalizeShift(readJSON(SHIFT_KEY, { active: false, startedAt: null, endedAt: null }));
   let lastOCRText = "";
   let lastOCRParsed = null;
   let quickOCRText = "";
@@ -85,7 +92,6 @@
     shiftStatus: $("shiftStatus"),
     heroStatusLabel: $("heroStatusLabel"),
     heroShiftBtn: $("heroShiftBtn"),
-    pauseShiftBtn: $("pauseShiftBtn"),
     paceCard: $("paceCard"),
     paceStatus: $("paceStatus"),
     paceRecommendation: $("paceRecommendation"),
@@ -113,8 +119,8 @@
     worstCompanyToday: $("worstCompanyToday"),
     bestZoneToday: $("bestZoneToday"),
     worstZoneToday: $("worstZoneToday"),
-    decisionsToday: $("decisionsToday"),
     performanceRecommendation: $("performanceRecommendation"),
+    decisionsToday: $("decisionsToday"),
     timeWorking: $("timeWorking"),
     driverScore: $("driverScore"),
     driverScoreTitle: $("driverScoreTitle"),
@@ -248,6 +254,7 @@
     decisionLogList: $("decisionLogList"),
     exportDecisionsBtn: $("exportDecisionsBtn"),
     shiftBtn: $("shiftBtn"),
+    pauseShiftBtn: $("pauseShiftBtn"),
     exportBtn: $("exportBtn"),
     exportTaxBtn: $("exportTaxBtn"),
     exportDailyBtn: $("exportDailyBtn"),
@@ -295,21 +302,9 @@
     }
   }
 
-  function migrateLegacyStorage() {
-    try {
-      for (const [nextKey, legacyKey] of Object.entries(LEGACY_STORAGE_KEYS)) {
-        if (localStorage.getItem(nextKey) !== null) continue;
-        const legacyValue = localStorage.getItem(legacyKey);
-        if (legacyValue !== null) localStorage.setItem(nextKey, legacyValue);
-      }
-    } catch {
-      // Storage can be blocked in private modes; normal read fallbacks still keep startup safe.
-    }
-  }
-
   function persistNormalizedState() {
     writeJSON(STORE_KEY, deliveries);
-    writeJSON(DECISIONS_KEY, decisionLog);
+    writeJSON(DECISIONS_KEY, decisions);
     writeJSON(SETTINGS_KEY, settings);
     writeJSON(SHIFT_KEY, shift);
   }
@@ -317,36 +312,6 @@
   function normalizeDeliveries(value) {
     if (!Array.isArray(value)) return [];
     return value.map((item) => normalizeDelivery(item)).filter(Boolean);
-  }
-
-  function normalizeDecisionLog(value) {
-    if (!Array.isArray(value)) return [];
-    return value.map((item) => normalizeDecision(item)).filter(Boolean).slice(-500);
-  }
-
-  function normalizeDecision(item) {
-    if (!item || typeof item !== "object") return null;
-    const pay = round2(num(item.pay ?? item.earnings));
-    const miles = round1(num(item.miles));
-    const minutes = round1(num(item.minutes));
-    const createdRaw = item.createdAt || item.date || item.timestamp || new Date().toISOString();
-    const createdAt = new Date(createdRaw);
-    const rawOutcome = String(item.outcome ?? item.decision ?? item.title ?? item.kind ?? "").trim().toUpperCase();
-    const outcome = ["ACCEPT", "BORDERLINE", "DECLINE"].includes(rawOutcome) ? rawOutcome : "";
-    if (!(pay > 0) || !(miles > 0) || !(minutes > 0) || pay > 10000 || miles > 1000 || minutes > 1440 || !outcome || Number.isNaN(createdAt.getTime())) return null;
-    return {
-      id: String(item.id || makeId()),
-      outcome,
-      company: allowedCompanies.has(item.company) ? item.company : "Other",
-      zone: cleanText(item.zone || "", 80),
-      pay,
-      miles,
-      minutes,
-      note: cleanText(item.note ?? item.notes ?? "", 400),
-      source: "calculator",
-      createdAt: createdAt.toISOString(),
-      version: DATA_VERSION
-    };
   }
 
   function normalizeDelivery(item) {
@@ -364,8 +329,6 @@
     const company = allowedCompanies.has(item.company) ? item.company : "Other";
     const minutesRaw = num(item.minutes);
     const merchant = cleanText(item.merchant ?? item.restaurant ?? item.store ?? "", 120);
-    const merchantHint = item.merchantType || item.venueType || (item.store && !item.merchant ? "store" : "");
-    const merchantType = normalizeMerchantType(merchantHint, merchant);
     const notes = cleanText(item.notes ?? item.note ?? "", 500);
     const inferredSource = item.ocrText ? "ocr" : "manual";
     const source = validSources.has(item.source) ? item.source : inferredSource;
@@ -378,9 +341,7 @@
       minutes: minutesRaw > 0 && minutesRaw <= 1440 ? round1(minutesRaw) : 0,
       zone: cleanText(item.zone || "", 80),
       merchant,
-      merchantType,
       restaurant: merchant,
-      store: merchantType === "store" ? merchant : "",
       note: notes,
       notes,
       source,
@@ -465,66 +426,58 @@
     return zones.sort((a, b) => a.localeCompare(b));
   }
 
+  function normalizeDecision(value) {
+    if (!value || typeof value !== "object") return null;
+    const outcome = ["ACCEPT", "BORDERLINE", "DECLINE"].includes(String(value.outcome || "").toUpperCase())
+      ? String(value.outcome).toUpperCase() : "BORDERLINE";
+    const createdAt = value.createdAt && !Number.isNaN(new Date(value.createdAt).getTime())
+      ? new Date(value.createdAt).toISOString() : new Date().toISOString();
+    return {
+      id: String(value.id || makeId()),
+      outcome,
+      company: allowedCompanies.has(value.company) ? value.company : "Other",
+      pay: round2(Math.max(0, num(value.pay ?? value.earnings))),
+      miles: round1(Math.max(0, num(value.miles))),
+      minutes: Math.max(0, Math.round(num(value.minutes))),
+      zone: cleanText(value.zone || "", 80),
+      note: cleanText(value.note || "", 300),
+      source: cleanText(value.source || "calculator", 30),
+      createdAt,
+      version: DATA_VERSION
+    };
+  }
+
+  function normalizeDecisions(value) {
+    return Array.isArray(value) ? value.map(normalizeDecision).filter(Boolean).slice(-2000) : [];
+  }
+
   function normalizeShift(value) {
     const raw = value && typeof value === "object" ? value : {};
     const startedAt = raw.startedAt && !Number.isNaN(new Date(raw.startedAt).getTime()) ? new Date(raw.startedAt).toISOString() : null;
     const endedAt = raw.endedAt && !Number.isNaN(new Date(raw.endedAt).getTime()) ? new Date(raw.endedAt).toISOString() : null;
+    const pausedAt = raw.pausedAt && !Number.isNaN(new Date(raw.pausedAt).getTime()) ? new Date(raw.pausedAt).toISOString() : null;
+    const breaks = Array.isArray(raw.breaks) ? raw.breaks.map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const start = item.startedAt && !Number.isNaN(new Date(item.startedAt).getTime()) ? new Date(item.startedAt).toISOString() : null;
+      const end = item.endedAt && !Number.isNaN(new Date(item.endedAt).getTime()) ? new Date(item.endedAt).toISOString() : null;
+      return start ? { startedAt: start, endedAt: end } : null;
+    }).filter(Boolean).slice(-100) : [];
     const active = Boolean(raw.active && startedAt);
-    const rawPausedAt = raw.pausedAt || raw.pauseStartedAt || null;
-    const candidatePausedAt = rawPausedAt && !Number.isNaN(new Date(rawPausedAt).getTime()) ? new Date(rawPausedAt).toISOString() : null;
-    const pausedAt = active && candidatePausedAt && new Date(candidatePausedAt) >= new Date(startedAt) ? candidatePausedAt : null;
-    const paused = Boolean(active && pausedAt && (raw.paused === true || raw.pauseStartedAt));
-    const breaks = normalizeShiftBreaks(raw.breaks || raw.pauseHistory || []);
+    const paused = Boolean(active && raw.paused && (pausedAt || breaks.some((item) => !item.endedAt)));
     const shiftHistory = Array.isArray(raw.shiftHistory)
       ? raw.shiftHistory.map((item) => normalizeShiftHistoryItem(item)).filter(Boolean).slice(-100)
       : [];
     return {
       active,
+      paused,
+      pausedAt: paused ? (pausedAt || new Date().toISOString()) : null,
+      breaks,
       startedAt,
       endedAt,
-      paused,
-      pausedAt: paused ? pausedAt : null,
-      breaks,
       lastSummary: cleanText(raw.lastSummary || "", 1000),
       shiftHistory,
       appDataVersion: DATA_VERSION
     };
-  }
-
-  function normalizeShiftBreaks(value) {
-    if (!Array.isArray(value)) return [];
-    const validBreaks = value.map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const startedAt = item.startedAt && !Number.isNaN(new Date(item.startedAt).getTime()) ? new Date(item.startedAt).toISOString() : null;
-      const endedAt = item.endedAt && !Number.isNaN(new Date(item.endedAt).getTime()) ? new Date(item.endedAt).toISOString() : null;
-      if (!startedAt || !endedAt || new Date(endedAt) <= new Date(startedAt)) return null;
-      return { startedAt, endedAt };
-    }).filter(Boolean).sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
-    const merged = [];
-    for (const item of validBreaks) {
-      const previous = merged[merged.length - 1];
-      if (!previous || new Date(item.startedAt) > new Date(previous.endedAt)) {
-        merged.push(item);
-      } else if (new Date(item.endedAt) > new Date(previous.endedAt)) {
-        previous.endedAt = item.endedAt;
-      }
-    }
-    return merged.slice(-100);
-  }
-
-  function activeShiftToday() {
-    return Boolean(shift.active && shift.startedAt && isToday(shift.startedAt));
-  }
-
-  function closeCurrentShiftBreak(currentShift, endedAt = new Date().toISOString()) {
-    if (!currentShift?.paused || !currentShift.pausedAt) return { ...currentShift, paused: false, pausedAt: null };
-    const starts = new Date(currentShift.pausedAt);
-    const ends = new Date(endedAt);
-    const breaks = Array.isArray(currentShift.breaks) ? [...currentShift.breaks] : [];
-    if (!Number.isNaN(starts.getTime()) && !Number.isNaN(ends.getTime()) && ends > starts) {
-      breaks.push({ startedAt: starts.toISOString(), endedAt: ends.toISOString() });
-    }
-    return { ...currentShift, paused: false, pausedAt: null, breaks };
   }
 
   function normalizeShiftHistoryItem(item) {
@@ -539,7 +492,6 @@
           miles: round1(num(item.metrics.miles)),
           orders: Math.max(0, Math.round(num(item.metrics.orders))),
           hours: round2(num(item.metrics.hours)),
-          breakMinutes: round1(num(item.metrics.breakMinutes)),
           avgMile: round2(num(item.metrics.avgMile)),
           profitMile: round2(num(item.metrics.profitMile)),
           avgHour: round2(num(item.metrics.avgHour)),
@@ -616,31 +568,34 @@
       .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   }
 
+  function breakMilliseconds(start, end) {
+    if (!shift?.breaks?.length) return 0;
+    const rangeStart = start.getTime();
+    const rangeEnd = end.getTime();
+    return shift.breaks.reduce((total, item) => {
+      const breakStart = new Date(item.startedAt).getTime();
+      const breakEnd = item.endedAt ? new Date(item.endedAt).getTime() : (shift.paused ? Date.now() : breakStart);
+      if (!Number.isFinite(breakStart) || !Number.isFinite(breakEnd)) return total;
+      return total + Math.max(0, Math.min(rangeEnd, breakEnd) - Math.max(rangeStart, breakStart));
+    }, 0);
+  }
+
   function getWorkWindow(todays) {
     let start = null;
     if (shift.startedAt && isToday(shift.startedAt)) start = new Date(shift.startedAt);
     else if (todays.length) start = new Date(todays[0].createdAt);
     if (!start) return null;
 
-    const isPaused = activeShiftToday() && shift.paused && shift.pausedAt;
-    let end = isPaused ? new Date(shift.pausedAt) : new Date();
+    let end = new Date();
     if (!shift.active && shift.endedAt && isToday(shift.endedAt)) {
       const ended = new Date(shift.endedAt);
       if (ended > start) end = ended;
     }
-    if (!isPaused && todays.length) {
+    if (todays.length) {
       const lastDelivery = new Date(todays[todays.length - 1].createdAt);
       if (lastDelivery > end) end = lastDelivery;
     }
-    const breakMs = (shift.breaks || []).reduce((sum, item) => {
-      const breakStart = new Date(item.startedAt);
-      const breakEnd = new Date(item.endedAt);
-      if (Number.isNaN(breakStart.getTime()) || Number.isNaN(breakEnd.getTime())) return sum;
-      const overlapStart = Math.max(start.getTime(), breakStart.getTime());
-      const overlapEnd = Math.min(end.getTime(), breakEnd.getTime());
-      return overlapEnd > overlapStart ? sum + (overlapEnd - overlapStart) : sum;
-    }, 0);
-    return { start, end, breakMs, paused: Boolean(isPaused) };
+    return { start, end, breakMilliseconds: breakMilliseconds(start, end) };
   }
 
   const ProfitEngine = {
@@ -761,14 +716,13 @@
       const avgOrder = orders ? round2(earnings / orders) : 0;
       const avgMile = this.grossDollarPerMile(earnings, miles);
       const profitMile = this.estimatedProfitPerMile(profit, miles, config);
-      const breakMinutes = workWindow ? round1(Math.max(0, Number(workWindow.breakMs || 0)) / 60000) : 0;
       const hours = workWindow
-        ? Math.max(((workWindow.end - workWindow.start) - Number(workWindow.breakMs || 0)) / 36e5, 1 / 60)
+        ? Math.max((workWindow.end - workWindow.start) / 36e5, 1 / 60)
         : (minutes ? minutes / 60 : 0);
       const avgHour = hours ? round2(earnings / hours) : 0;
       const profitHour = hours ? round2(profit / hours) : 0;
       const projectedTotal = this.projectedDailyEarnings(earnings, avgHour, hours, activeShift);
-      return { earnings, miles, orders, avgOrder, avgMile, profitMile, avgHour, profitHour, hours, breakMinutes, profit, expenses, taxDeduction, minutes, projectedTotal };
+      return { earnings, miles, orders, avgOrder, avgMile, profitMile, avgHour, profitHour, hours, profit, expenses, taxDeduction, minutes, projectedTotal };
     }
   };
 
@@ -886,9 +840,9 @@
     renderZoneControls();
     renderSmartGoal();
     renderShiftButton();
+    renderDecisionLog();
     renderDeliveryPreview();
     renderDecision();
-    renderDecisionLog();
   }
 
   function renderLive() {
@@ -904,7 +858,6 @@
     renderCommandMetrics(todays, c, goal, remaining, score, bestCompany, bestZone, worstCompany, worstZone);
     els.shiftStatus.textContent = shiftStatusText(c.hours);
     els.goalRemaining.textContent = buildGoalInsight(c, goal, remaining);
-    renderShiftButton();
   }
 
   function renderCommandMetrics(todays, c, goal, remaining, score, bestCompany, bestZone, worstCompany = null, worstZone = null) {
@@ -912,7 +865,6 @@
     const paceStatus = paceStatusLabel(c);
     const efficiencyStatus = efficiencyStatusLabel(c);
     const taxRate = Number(settings.taxMileageRate || 0);
-    const decisionSummary = buildDecisionLogSummary(todayDecisions());
 
     els.profitToday.textContent = money.format(c.profit);
     els.profitHour.textContent = money.format(c.profitHour);
@@ -945,8 +897,8 @@
     els.worstCompanyToday.textContent = worstCompany ? worstCompany.name : (bestCompany ? "Need 2+" : "—");
     els.bestZoneToday.textContent = bestZone ? bestZone.name : "—";
     els.worstZoneToday.textContent = worstZone ? worstZone.name : (bestZone ? "Need 2+" : "—");
-    els.decisionsToday.textContent = String(decisionSummary.total);
     els.timeWorking.textContent = formatHours(c.hours);
+    if (els.decisionsToday) els.decisionsToday.textContent = String(decisions.filter((d) => isToday(d.createdAt)).length);
     els.performanceRecommendation.textContent = performanceRecommendation(c, bestCompany, bestZone);
     els.heroStatusLabel.textContent = heroStatusLabel(c, score.value, goal);
     setStatusClass(els.performanceCard, scoreKind(score.value, c.orders));
@@ -1033,8 +985,8 @@
   }
 
   function shiftStatusText(hours) {
-    if (activeShiftToday() && shift.paused) return `On break · ${formatHours(hours)} active`;
-    if (activeShiftToday()) return `Shift active · ${formatHours(hours)}`;
+    if (shift.active && shift.paused && shift.startedAt && isToday(shift.startedAt)) return `On break · ${formatHours(hours)} active`;
+    if (shift.active && shift.startedAt && isToday(shift.startedAt)) return `Shift active · ${formatHours(hours)}`;
     if (shift.endedAt && isToday(shift.endedAt)) return `Shift ended · ${formatHours(hours)}`;
     return "No active shift";
   }
@@ -1055,7 +1007,7 @@
     els.trendCard.classList.remove("trend-up", "trend-down");
     if (todays.length === 0) {
       els.trendTitle.textContent = "No deliveries yet";
-      els.trendDetail.textContent = `After each delivery, ${APP_NAME} shows whether that delivery helped or hurt your average.`;
+      els.trendDetail.textContent = "After each delivery, GigLens shows whether that delivery helped or hurt your average.";
       return;
     }
     const last = todays[todays.length - 1];
@@ -1107,7 +1059,6 @@
         earnings: c.earnings,
         profit: c.profit,
         hours: round2(c.hours),
-        breakMinutes: round1(c.breakMinutes),
         miles: c.miles,
         orders: c.orders,
         avgHour: c.avgHour,
@@ -1160,11 +1111,10 @@
     const best = recap.bestDelivery ? `${recap.bestDelivery.company} ${money.format(recap.bestDelivery.earnings)} for ${Number(recap.bestDelivery.miles || 0).toFixed(1)} mi` : "Not enough data";
     const weak = recap.weakestDelivery ? `${recap.weakestDelivery.company} ${money.format(recap.weakestDelivery.earnings)} for ${Number(recap.weakestDelivery.miles || 0).toFixed(1)} mi` : "Not enough data";
     return [
-      `${APP_NAME} recap for ${recap.date}`,
+      `GigLens recap for ${recap.date}`,
       `Gross earnings: ${money.format(m.earnings)}`,
       `Estimated profit: ${money.format(m.profit)}`,
       `Hours worked: ${formatHours(m.hours)}`,
-      `Break time: ${formatHours((m.breakMinutes || 0) / 60)}`,
       `Deliveries: ${m.orders}`,
       `Miles: ${Number(m.miles || 0).toFixed(1)}`,
       `Gross/hour: ${money.format(m.avgHour)}`,
@@ -1802,7 +1752,7 @@
           <span><strong>${money.format(profit)}</strong><small>profit</small></span>
         </div>
         <div class="history-meta">${date} · Zone: ${escapeHTML(zoneLabel)} · <span class="source-pill">${escapeHTML(sourceLabel(d.source))}</span></div>
-        ${d.merchant ? `<div class="history-meta merchant-meta">${merchantTypeLabel(d.merchantType)}: ${escapeHTML(d.merchant)}</div>` : ""}
+        ${d.merchant ? `<div class="history-meta merchant-meta">Restaurant: ${escapeHTML(d.merchant)}</div>` : ""}
         ${d.notes ? `<div class="history-meta">${escapeHTML(d.notes)}</div>` : ""}
         <div class="history-actions" aria-label="Delivery actions">
           <button class="mini-btn" data-edit="${escapeHTML(d.id)}" type="button">Edit</button>
@@ -2029,14 +1979,14 @@
     }
   }
 
-  function gigLensStorageKeys() {
-    const known = [STORE_KEY, DECISIONS_KEY, SETTINGS_KEY, SHIFT_KEY, ROLLBACK_KEY, LAST_BACKUP_KEY];
+  function driveLedgerStorageKeys() {
+    const known = [STORE_KEY, SETTINGS_KEY, SHIFT_KEY, ROLLBACK_KEY, LAST_BACKUP_KEY];
     const found = new Set(known);
     try {
       if (typeof localStorage.length === "number" && typeof localStorage.key === "function") {
         for (let i = 0; i < localStorage.length; i += 1) {
           const key = localStorage.key(i);
-          if (key && (key.startsWith(`${APP_SLUG}.`) || key.startsWith("driveledger."))) found.add(key);
+          if (key && key.startsWith("driveledger.")) found.add(key);
         }
       }
     } catch {
@@ -2046,7 +1996,7 @@
   }
 
   function storageUsageEstimate() {
-    const rows = gigLensStorageKeys().map((key) => {
+    const rows = driveLedgerStorageKeys().map((key) => {
       const raw = localStorage.getItem(key) || "";
       return { key, bytes: raw.length * 2, present: raw.length > 0 };
     });
@@ -2067,13 +2017,13 @@
     const activeCount = usage.rows.filter((row) => row.present).length;
     if (els.privacyStorageStatus) els.privacyStorageStatus.textContent = activeCount ? `${formatBytes(usage.totalBytes)} local` : "Local only";
     els.storageUsageEstimate.innerHTML = `
-      <strong>${formatBytes(usage.totalBytes)}</strong> estimated ${APP_NAME} localStorage usage
+      <strong>${formatBytes(usage.totalBytes)}</strong> estimated GigLens localStorage usage
       <span>${activeCount} active local key${activeCount === 1 ? "" : "s"}</span>
     `;
     const presentRows = usage.rows.filter((row) => row.present);
     if (!presentRows.length) {
       els.storageUsageDetails.className = "privacy-key-list empty";
-      els.storageUsageDetails.textContent = `No saved ${APP_NAME} data yet. Add deliveries or save settings to create local records.`;
+      els.storageUsageDetails.textContent = "No saved GigLens data yet. Add deliveries or save settings to create local records.";
       return;
     }
     els.storageUsageDetails.className = "privacy-key-list";
@@ -2083,14 +2033,14 @@
   }
 
   function renderShiftButton() {
-    const isActive = activeShiftToday();
-    const label = isActive ? "End Day" : "Start Day";
+    const runningToday = shift.active && shift.startedAt && isToday(shift.startedAt);
+    const label = runningToday ? "End Day" : "Start Day";
     els.shiftBtn.textContent = label;
     if (els.heroShiftBtn) els.heroShiftBtn.textContent = label;
     if (els.pauseShiftBtn) {
-      els.pauseShiftBtn.textContent = isActive && shift.paused ? "Resume" : "Pause";
-      els.pauseShiftBtn.disabled = !isActive;
-      els.pauseShiftBtn.setAttribute("aria-label", isActive && shift.paused ? "Resume today's driving shift" : "Pause today's driving shift for a break");
+      els.pauseShiftBtn.disabled = !runningToday;
+      els.pauseShiftBtn.textContent = shift.paused ? "Resume" : "Pause";
+      els.pauseShiftBtn.setAttribute("aria-label", shift.paused ? "Resume today's driving shift" : "Pause today's driving shift for a break");
     }
   }
 
@@ -2134,54 +2084,6 @@
     `;
     if (announce) toast(`${decision.title}: ${decision.detail}`);
     return decision;
-  }
-
-  function todayDecisions() {
-    return decisionLog.filter((item) => isToday(item.createdAt));
-  }
-
-  function buildDecisionLogSummary(rows = []) {
-    const safeRows = Array.isArray(rows) ? rows : [];
-    const counts = { ACCEPT: 0, BORDERLINE: 0, DECLINE: 0 };
-    for (const row of safeRows) {
-      if (counts[row.outcome] !== undefined) counts[row.outcome] += 1;
-    }
-    return { ...counts, total: safeRows.length };
-  }
-
-  function renderDecisionLog() {
-    if (!els.decisionLogList) return;
-    const today = todayDecisions();
-    const summary = buildDecisionLogSummary(today);
-    if (els.decisionLogStatus) els.decisionLogStatus.textContent = summary.total ? `${summary.total} today` : "No decisions yet";
-    if (els.decisionLogSummary) {
-      els.decisionLogSummary.textContent = summary.total
-        ? `Today: ${summary.ACCEPT} accepted Â· ${summary.BORDERLINE} borderline Â· ${summary.DECLINE} declined. Log decisions before saving completed orders to keep your order-quality history complete.`
-        : "Log a recommendation to remember what you accepted, passed on, or treated as borderline. Decisions stay in this browser.";
-    }
-    if (els.decisionLogMetrics) {
-      els.decisionLogMetrics.innerHTML = [
-        [summary.ACCEPT, "accepted"],
-        [summary.BORDERLINE, "borderline"],
-        [summary.DECLINE, "declined"]
-      ].map(([value, label]) => `<span><strong>${value}</strong><small>${label}</small></span>`).join("");
-    }
-    const recent = [...decisionLog].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 8);
-    if (!recent.length) {
-      els.decisionLogList.className = "decision-log-list empty";
-      els.decisionLogList.textContent = "No order decisions logged yet.";
-      return;
-    }
-    els.decisionLogList.className = "decision-log-list";
-    els.decisionLogList.innerHTML = recent.map((item) => {
-      const zone = item.zone || "Unassigned";
-      const time = new Date(item.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-      return `<article class="decision-log-item ${item.outcome.toLowerCase()}">
-        <div class="decision-log-top"><strong>${escapeHTML(item.outcome)}</strong><span>${escapeHTML(item.company)} Â· ${escapeHTML(time)}</span></div>
-        <div class="decision-log-meta">${money.format(item.pay)} Â· ${item.miles.toFixed(1)} mi Â· ${item.minutes.toFixed(0)} min Â· ${escapeHTML(zone)}</div>
-        ${item.note ? `<div class="decision-log-note">${escapeHTML(item.note)}</div>` : ""}
-      </article>`;
-    }).join("");
   }
 
   function evaluateOffer(pay, miles, minutes) {
@@ -2323,7 +2225,7 @@
     const zone = cleanText(els.offerZoneInput.value || settings.defaultZone || "", 80) || "Unspecified zone";
     const note = cleanText(els.offerNoteInput.value || "", 200);
     const lines = [
-      `${APP_NAME} order decision: ${decision.title}`,
+      `GigLens order decision: ${decision.title}`,
       `Company: ${company}`,
       `Zone: ${zone}`,
       `Pay: ${money.format(num(els.offerPayInput.value))}`,
@@ -2357,36 +2259,6 @@
     els.offerNoteInput.value = "";
     if (!keepCompany) els.offerCompanyInput.value = settings.defaultCompany;
     renderDecision();
-  }
-
-  function logCurrentDecision() {
-    const pay = num(els.offerPayInput.value);
-    const miles = num(els.offerMilesInput.value);
-    const minutes = num(els.offerMinutesInput.value);
-    const decision = renderDecision();
-    if (decision.kind === "neutral") return toast("Enter valid pay, miles, and minutes before logging a decision.");
-    const logged = recordDecision(decision, { pay, miles, minutes });
-    if (!logged) return toast("Could not log this decision. Check the offer fields.");
-    render();
-    toast(`${logged.outcome} decision logged.`);
-  }
-
-  function recordDecision(decision, { pay, miles, minutes }) {
-    const logged = normalizeDecision({
-      id: makeId(),
-      outcome: decision.title,
-      company: els.offerCompanyInput.value,
-      zone: els.offerZoneInput.value || settings.defaultZone || "",
-      pay,
-      miles,
-      minutes,
-      note: els.offerNoteInput.value,
-      createdAt: new Date().toISOString()
-    });
-    if (!logged) return null;
-    decisionLog = [...decisionLog, logged].slice(-500);
-    writeJSON(DECISIONS_KEY, decisionLog);
-    return logged;
   }
 
   function escapeHTML(value) {
@@ -2570,113 +2442,45 @@
     renderQuickAddPreview();
   }
 
-  function emptyVisualProfile() {
-    return { dominant: "", confidence: 0, ratios: { red: 0, orange: 0, green: 0, blue: 0 } };
+  function withTimeout(promise, timeoutMs, message) {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
   }
 
-  function normalizeVisualProfile(profile) {
-    const empty = emptyVisualProfile();
-    if (!profile || typeof profile !== "object") return empty;
-    const dominant = ["red", "orange", "green", "blue"].includes(profile.dominant) ? profile.dominant : "";
-    const ratios = {};
-    for (const color of Object.keys(empty.ratios)) {
-      ratios[color] = Math.min(1, Math.max(0, num(profile.ratios?.[color])));
-    }
-    return {
-      dominant,
-      confidence: dominant ? Math.min(1, Math.max(0, num(profile.confidence))) : 0,
-      ratios
-    };
+  function formatOCRProgress(progress) {
+    if (!progress || typeof progress !== "object") return "Preparing OCR…";
+    const status = String(progress.status || "Processing").replace(/_/g, " ");
+    const percent = Number.isFinite(progress.progress) ? ` ${Math.round(progress.progress * 100)}%` : "";
+    return `${status.charAt(0).toUpperCase()}${status.slice(1)}${percent}`;
   }
 
-  function classifyAccentHue(red, green, blue) {
-    const r = red / 255;
-    const g = green / 255;
-    const b = blue / 255;
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const delta = max - min;
-    if (max < 0.28 || delta === 0 || delta / max < 0.42) return "";
-    let hue = 0;
-    if (max === r) hue = 60 * (((g - b) / delta) % 6);
-    else if (max === g) hue = 60 * (((b - r) / delta) + 2);
-    else hue = 60 * (((r - g) / delta) + 4);
-    if (hue < 0) hue += 360;
-    if (hue < 18 || hue >= 342) return "red";
-    if (hue < 55) return "orange";
-    if (hue >= 75 && hue < 172) return "green";
-    if (hue >= 182 && hue < 258) return "blue";
-    return "";
-  }
-
-  async function loadScreenshotBitmap(file) {
-    if (typeof globalThis.createImageBitmap === "function") {
-      try { return await globalThis.createImageBitmap(file); } catch (_) { /* use the Image fallback */ }
-    }
-    if (typeof globalThis.Image !== "function" || !globalThis.URL?.createObjectURL) return null;
-    const objectUrl = globalThis.URL.createObjectURL(file);
+  async function recognizeScreenshot(file, onProgress) {
+    const api = globalThis.Tesseract;
+    if (!api) throw new Error("OCR library is unavailable. Check your internet connection and reload GigLens.");
+    let worker = null;
     try {
-      return await new Promise((resolve, reject) => {
-        const image = new globalThis.Image();
-        image.onload = () => resolve(image);
-        image.onerror = () => reject(new Error("Screenshot could not be decoded"));
-        image.src = objectUrl;
-      });
-    } catch (_) {
-      return null;
-    } finally {
-      globalThis.URL.revokeObjectURL(objectUrl);
-    }
-  }
-
-  async function analyzeScreenshotColors(file) {
-    // This plain-object hook keeps the color classifier deterministic in the
-    // no-browser smoke harness. Real uploaded Blob/File objects always go
-    // through pixel analysis.
-    const isRealBlob = typeof globalThis.Blob === "function" && file instanceof globalThis.Blob;
-    if (!isRealBlob && file?.visualProfile) return normalizeVisualProfile(file.visualProfile);
-    if (!file || typeof document?.createElement !== "function") return emptyVisualProfile();
-
-    const canvas = document.createElement("canvas");
-    const context = typeof canvas.getContext === "function" ? canvas.getContext("2d", { willReadFrequently: true }) : null;
-    if (!context) return emptyVisualProfile();
-    const image = await loadScreenshotBitmap(file);
-    if (!image) return emptyVisualProfile();
-
-    try {
-      const sourceWidth = image.width || image.naturalWidth || 0;
-      const sourceHeight = image.height || image.naturalHeight || 0;
-      if (!(sourceWidth > 0) || !(sourceHeight > 0)) return emptyVisualProfile();
-      canvas.width = 72;
-      canvas.height = Math.max(72, Math.min(156, Math.round(72 * sourceHeight / sourceWidth)));
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      // Offer cards and action buttons occupy the lower half in the supported
-      // driver apps. Ignoring the upper map reduces false color matches.
-      const startY = Math.floor(canvas.height * 0.45);
-      const pixels = context.getImageData(0, startY, canvas.width, canvas.height - startY).data;
-      const counts = { red: 0, orange: 0, green: 0, blue: 0 };
-      let sampled = 0;
-      for (let index = 0; index < pixels.length; index += 4) {
-        if (pixels[index + 3] < 200) continue;
-        sampled += 1;
-        const color = classifyAccentHue(pixels[index], pixels[index + 1], pixels[index + 2]);
-        if (color) counts[color] += 1;
+      if (typeof api.createWorker === "function") {
+        const workerPromise = api.createWorker("eng", 1, {
+          workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@v5.1.1/dist/worker.min.js",
+          corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0",
+          langPath: "https://tessdata.projectnaptha.com/4.0.0",
+          logger: (message) => onProgress?.(formatOCRProgress(message)),
+          errorHandler: (error) => console.error("GigLens OCR worker error", error)
+        });
+        worker = await withTimeout(workerPromise, OCR_INIT_TIMEOUT_MS, "OCR engine took too long to start. Check your connection and try again.");
+        return await withTimeout(worker.recognize(file), OCR_RECOGNIZE_TIMEOUT_MS, "OCR took too long. Try a smaller or clearer screenshot.");
       }
-      if (!sampled) return emptyVisualProfile();
-      const ratios = Object.fromEntries(Object.entries(counts).map(([color, count]) => [color, count / sampled]));
-      const ranked = Object.entries(ratios).sort((a, b) => b[1] - a[1]);
-      const [topColor, topRatio] = ranked[0];
-      const secondRatio = ranked[1]?.[1] || 0;
-      const hasEnoughColor = topRatio >= 0.004;
-      const hasClearLead = secondRatio === 0 || topRatio >= secondRatio * 1.28 || topRatio - secondRatio >= 0.01;
-      if (!hasEnoughColor || !hasClearLead) return { ...emptyVisualProfile(), ratios };
-      const strength = Math.min(1, topRatio / 0.05);
-      const separation = Math.min(1, (topRatio - secondRatio) / Math.max(topRatio, 0.001));
-      return normalizeVisualProfile({ dominant: topColor, confidence: 0.4 + strength * 0.35 + separation * 0.25, ratios });
-    } catch (_) {
-      return emptyVisualProfile();
+      if (typeof api.recognize === "function") {
+        return await withTimeout(api.recognize(file, "eng", { logger: (message) => onProgress?.(formatOCRProgress(message)) }), OCR_RECOGNIZE_TIMEOUT_MS, "OCR took too long. Try a smaller or clearer screenshot.");
+      }
+      throw new Error("OCR library loaded without a recognition API.");
     } finally {
-      if (typeof image.close === "function") image.close();
+      if (worker && typeof worker.terminate === "function") {
+        try { await worker.terminate(); } catch (error) { console.warn("GigLens OCR worker cleanup failed", error); }
+      }
     }
   }
 
@@ -2691,7 +2495,7 @@
       els.quickPreviewImage.classList.remove("hidden");
     }
     setQuickScanState("loading", "Scanning screenshot for restaurant, pay, miles, and time…");
-    if (!globalThis.Tesseract || typeof globalThis.Tesseract.recognize !== "function") {
+    if (!globalThis.Tesseract || (typeof globalThis.Tesseract.recognize !== "function" && typeof globalThis.Tesseract.createWorker !== "function")) {
       const offlineHint = navigator && navigator.onLine === false
         ? " You appear to be offline, so OCR may be unavailable until the library has loaded once online."
         : "";
@@ -2699,18 +2503,16 @@
       return;
     }
     try {
-      const [result, visualProfile] = await Promise.all([
-        globalThis.Tesseract.recognize(file, "eng", TESSERACT_OPTIONS),
-        analyzeScreenshotColors(file)
-      ]);
+      const result = await recognizeScreenshot(file, (progress) => setQuickScanState("loading", progress));
       quickOCRText = result?.data?.text || "";
-      quickOCRParsed = parseOCR(quickOCRText, visualProfile);
+      quickOCRParsed = parseOCR(quickOCRText);
+      quickOCRParsed.merchantType = inferMerchantType(quickOCRParsed.merchant, quickOCRText);
       populateQuickFromOCR(quickOCRParsed);
       if (els.quickOcrText) els.quickOcrText.textContent = quickOCRText || "No readable text detected.";
       if (els.quickOcrDetails) els.quickOcrDetails.classList.remove("hidden");
       if (els.quickClearScanBtn) els.quickClearScanBtn.classList.remove("hidden");
       const label = confidenceLabel(quickOCRParsed.confidence);
-      const merchantText = quickOCRParsed.merchant ? ` Found ${merchantTypeLabel(quickOCRParsed.merchantType)}: ${quickOCRParsed.merchant}.` : " Merchant needs review.";
+      const merchantText = quickOCRParsed.merchant ? ` Found ${quickOCRParsed.merchant}.` : " Restaurant needs review.";
       const message = label === "Needs review"
         ? `Scan complete, but confidence is low.${merchantText} Review the fields before saving.`
         : `Scan complete.${merchantText} Review and save.`;
@@ -2718,7 +2520,7 @@
     } catch (err) {
       console.error(err);
       quickOCRParsed = null;
-      setQuickScanState("failed", "Could not scan this screenshot. Type the delivery below or try another image.");
+      setQuickScanState("failed", `Could not scan this screenshot. ${err?.message || "Type the delivery below or try another image."}`);
     }
   }
 
@@ -2737,8 +2539,6 @@
     const minutes = readQuickNumber(els.quickMinutesInput, "minutes", { required: false, allowZero: true });
     if (minutes === null) return;
 
-    const merchant = cleanText(els.quickMerchantInput?.value || "", 120);
-    const merchantType = quickOCRParsed?.merchant === merchant ? quickOCRParsed.merchantType : "";
     const now = new Date().toISOString();
     const delivery = normalizeDelivery({
       id: makeId(),
@@ -2747,8 +2547,7 @@
       miles,
       minutes,
       zone: els.quickZoneInput.value || settings.defaultZone || "",
-      merchant,
-      merchantType,
+      merchant: els.quickMerchantInput?.value || "",
       notes: els.quickNotesInput.value,
       source: quickOCRText ? "ocr" : "manual",
       ocrText: quickOCRText,
@@ -2791,7 +2590,7 @@
     els.previewImage.classList.remove("hidden");
     setScanState("loading", "Scanning screenshot…");
 
-    if (!globalThis.Tesseract || typeof globalThis.Tesseract.recognize !== "function") {
+    if (!globalThis.Tesseract || (typeof globalThis.Tesseract.recognize !== "function" && typeof globalThis.Tesseract.createWorker !== "function")) {
       const offlineHint = navigator && navigator.onLine === false
         ? " You appear to be offline, so OCR may be unavailable until the library has loaded once online."
         : "";
@@ -2800,12 +2599,10 @@
     }
 
     try {
-      const [result, visualProfile] = await Promise.all([
-        globalThis.Tesseract.recognize(file, "eng", TESSERACT_OPTIONS),
-        analyzeScreenshotColors(file)
-      ]);
+      const result = await recognizeScreenshot(file, (progress) => setScanState("loading", progress));
       lastOCRText = result?.data?.text || "";
-      lastOCRParsed = parseOCR(lastOCRText, visualProfile);
+      lastOCRParsed = parseOCR(lastOCRText);
+      lastOCRParsed.merchantType = inferMerchantType(lastOCRParsed.merchant, lastOCRText);
       els.ocrText.textContent = lastOCRText || "No readable text detected.";
       els.ocrDetails.classList.remove("hidden");
       renderOCRReview(lastOCRParsed);
@@ -2817,7 +2614,7 @@
     } catch (err) {
       console.error(err);
       lastOCRParsed = null;
-      setScanState("failed", "Could not scan this screenshot. Enter the delivery manually or try another image.");
+      setScanState("failed", `Could not scan this screenshot. ${err?.message || "Enter the delivery manually or try another image."}`);
     }
   }
 
@@ -2843,9 +2640,8 @@
         ? `${parsed.platform} (matched ${evidence.join(", ")})`
         : parsed.platform;
     } else {
-      els.ocrCompany.textContent = parsed.platformReason ? `Needs review (${parsed.platformReason})` : "Needs review";
+      els.ocrCompany.textContent = "Needs review";
     }
-    if (els.ocrMerchantLabel) els.ocrMerchantLabel.textContent = parsed.merchant ? merchantTypeLabel(parsed.merchantType) : "Restaurant / store";
     if (els.ocrMerchant) els.ocrMerchant.textContent = parsed.merchant || "Needs review";
     els.ocrEarnings.textContent = parsed.earnings ? money.format(parsed.earnings) : "Needs review";
     els.ocrMiles.textContent = parsed.miles ? `${parsed.miles.toFixed(1)} mi` : "Needs review";
@@ -2918,10 +2714,7 @@
       flagInvalid(els.ocrMinutesInput);
       return null;
     }
-    const merchantType = lastOCRParsed?.merchant === merchant
-      ? lastOCRParsed.merchantType
-      : normalizeMerchantType("", merchant);
-    return { company, earnings, miles, minutes, merchant, merchantType };
+    return { company, earnings, miles, minutes, merchant };
   }
 
   function saveReviewedOCR() {
@@ -2937,7 +2730,6 @@
       minutes: reviewed.minutes,
       zone: els.zoneInput.value || settings.defaultZone || "",
       merchant: reviewed.merchant,
-      merchantType: reviewed.merchantType,
       notes: els.notesInput.value || reviewed.merchant,
       source: "ocr",
       ocrText: lastOCRText,
@@ -2962,7 +2754,6 @@
     els.ocrDetails.classList.add("hidden");
     els.ocrText.textContent = "";
     els.ocrCompany.textContent = "—";
-    if (els.ocrMerchantLabel) els.ocrMerchantLabel.textContent = "Restaurant / store";
     if (els.ocrMerchant) els.ocrMerchant.textContent = "—";
     els.ocrEarnings.textContent = "—";
     els.ocrMiles.textContent = "—";
@@ -2990,22 +2781,20 @@
     }
   }
 
-  function parseOCR(text, visualProfile = emptyVisualProfile()) {
+  function parseOCR(text) {
     const rawText = String(text || "");
     const lines = ocrLines(rawText);
     const normalized = rawText.replace(/\s+/g, " ").trim();
-    const platformResult = detectPlatformDetailed(normalized, visualProfile);
+    const platformResult = detectPlatformDetailed(normalized);
     const platform = platformResult.platform;
     const earnings = detectEarnings(normalized);
     const miles = detectMiles(normalized);
     const minutes = detectMinutes(normalized);
-    const merchantResult = detectMerchantDetailed(lines, normalized, platform);
-    const merchant = merchantResult.merchant;
+    const merchant = detectMerchant(lines, normalized, platform);
     // Weight the platform's contribution to overall confidence by how sure the
     // fingerprint match was, so a strong brand hit boosts more than a weak guess.
     let confidence = 15;
     if (platform) confidence += Math.round(8 + (platformResult.platformConfidence / 100) * 16);
-    if (platform && platformResult.visualMatched) confidence += 4;
     if (merchant) confidence += 18;
     if (earnings) confidence += 28;
     if (miles) confidence += 22;
@@ -3014,10 +2803,7 @@
       platform,
       platformConfidence: platformResult.platformConfidence,
       platformEvidence: platformResult.evidence,
-      platformReason: platformResult.reason || "",
-      visualProfile: normalizeVisualProfile(visualProfile),
       merchant,
-      merchantType: merchantResult.merchantType,
       restaurant: merchant,
       earnings,
       miles,
@@ -3058,7 +2844,7 @@
 
     // Drop trailing addresses when OCR puts merchant and street address on one line.
     cleaned = cleaned
-      .replace(/\s+\(?\d{1,6}\s+[A-Za-z0-9.'\-\s]+\b(?:st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|ct|court|pl|place|pkwy|parkway|way|hwy|highway)\b\)?.*$/i, "")
+      .replace(/\s+\d{1,6}\s+[A-Za-z0-9.'\-\s]+\b(?:st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|ct|court|pl|place|pkwy|parkway|way|hwy|highway)\b.*$/i, "")
       .replace(/\s+\b(?:suite|ste|unit|apt|#)\s*[A-Za-z0-9-]+.*$/i, "")
       .replace(/\s+\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b.*$/i, "")
       .replace(/\s+\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}.*$/i, "")
@@ -3066,6 +2852,19 @@
       .trim();
 
     return cleanText(cleaned, 120);
+  }
+
+  const knownStorePatterns = [
+    [/\bwalmart\b/i, "Walmart"], [/\bschnucks\b/i, "Schnucks"], [/\btarget\b/i, "Target"],
+    [/\bbest\s*buy\b/i, "Best Buy"], [/\bcostco\b/i, "Costco"], [/\bwalgreens\b/i, "Walgreens"],
+    [/\bcvs\b/i, "CVS"], [/\bhome\s*depot\b/i, "Home Depot"], [/\blowe'?s\b/i, "Lowe's"]
+  ];
+
+  function inferMerchantType(merchant, context = "") {
+    const source = `${merchant || ""} ${context || ""}`;
+    if (knownStorePatterns.some(([pattern]) => pattern.test(source)) || /\b(?:store|grocery|market|pharmacy|retail|curbside|items? to shop)\b/i.test(source)) return "store";
+    if (detectKnownRestaurant(source) || /\b(?:restaurant|cafe|café|grill|kitchen|diner|pizza|taco|burger|chicken|sushi|bakery)\b/i.test(source)) return "restaurant";
+    return "merchant";
   }
 
   function cleanMerchantName(value) {
@@ -3101,50 +2900,6 @@
     return "";
   }
 
-  const knownStorePatterns = [
-    [/\bwalmart(?:\s+supercenter)?\b/i, "Walmart"], [/\btarget\b/i, "Target"], [/\bcostco\b/i, "Costco"], [/sam'?s\s*club/i, "Sam's Club"],
-    [/\baldi\b/i, "ALDI"], [/\bkroger\b/i, "Kroger"], [/\bschnucks\b/i, "Schnucks"], [/\bsafeway\b/i, "Safeway"],
-    [/\balbertsons\b/i, "Albertsons"], [/\bpublix\b/i, "Publix"], [/\bmeijer\b/i, "Meijer"], [/\bh[\-. ]?e[\-. ]?b\b/i, "H-E-B"],
-    [/\bwegmans\b/i, "Wegmans"], [/\bwhole\s*foods\b/i, "Whole Foods Market"], [/trader\s*joe'?s/i, "Trader Joe's"],
-    [/\bcvs\b/i, "CVS"], [/\bwalgreens\b/i, "Walgreens"], [/\brite\s*aid\b/i, "Rite Aid"],
-    [/\bdollar\s*general\b/i, "Dollar General"], [/\bdollar\s*tree\b/i, "Dollar Tree"], [/7[\s-]?eleven/i, "7-Eleven"],
-    [/\bbest\s*buy\b/i, "Best Buy"], [/\bhome\s*depot\b/i, "The Home Depot"], [/\blowe'?s\b/i, "Lowe's"],
-    [/\bstaples\b/i, "Staples"], [/\boffice\s*depot\b/i, "Office Depot"], [/\bpetsmart\b/i, "PetSmart"], [/\bpetco\b/i, "Petco"],
-    [/\bautozone\b/i, "AutoZone"], [/o['’]?reilly\s*auto/i, "O'Reilly Auto Parts"], [/advance\s*auto/i, "Advance Auto Parts"],
-    [/\bmenards\b/i, "Menards"], [/\bikea\b/i, "IKEA"], [/\bmichaels\b/i, "Michaels"], [/\bulta\b/i, "Ulta Beauty"],
-    [/\bsephora\b/i, "Sephora"], [/dick'?s\s*sporting/i, "Dick's Sporting Goods"]
-  ];
-
-  function detectKnownStore(text) {
-    const source = String(text || "");
-    for (const [pattern, label] of knownStorePatterns) {
-      if (pattern.test(source)) return label;
-    }
-    return "";
-  }
-
-  function normalizeMerchantType(value, merchant, context = "") {
-    const type = cleanText(value || "", 20).toLowerCase();
-    if (["restaurant", "store", "merchant"].includes(type)) return type;
-    return inferMerchantType(merchant, context);
-  }
-
-  function inferMerchantType(value, context = "") {
-    const source = `${String(value || "")} ${String(context || "")}`;
-    if (!cleanText(value || "", 120)) return "merchant";
-    if (detectKnownStore(source)) return "store";
-    if (detectKnownRestaurant(source)) return "restaurant";
-    if (/\b(?:store|shop|retail|grocery|supermarket|supercenter|pharmacy|warehouse|department)\b/i.test(source)) return "store";
-    if (/\b(?:cafe|cafÃ©|coffee|pizza|taco|burger|grill|kitchen|deli|wings|bbq|barbecue|sushi|thai|mexican|chicken|subs?|sandwich|noodle|ramen|bakery|bistro|restaurant|steak|seafood|gyro|pasta|pub|bar\b|taqueria|cantina|smokehouse|diner|waffle|pancake|donut|doughnut)\b/i.test(source)) return "restaurant";
-    return "merchant";
-  }
-
-  function merchantTypeLabel(type) {
-    if (type === "store") return "Store";
-    if (type === "restaurant") return "Restaurant";
-    return "Merchant";
-  }
-
   function looksLikeAddress(value) {
     const text = String(value || "").trim();
     return /\b\d{1,6}\s+[A-Za-z0-9.'\-\s]+\b(?:st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|ct|court|pl|place|pkwy|parkway|way|hwy|highway)\b/i.test(text)
@@ -3157,7 +2912,7 @@
   }
 
   function platformRegex() {
-    return /(doordash|door\s*dash|dashpass|uber\s*eats|ubereats|grubhub|grub\s*hub|instacart|amazon\s*flex|spark\s*driver|roadie|ezcater|catervalley|deliverthat|dlivrd)/i;
+    return /(doordash|door\s*dash|dashpass|uber\s*eats|ubereats|grubhub|grub\s*hub|instacart|spark|walmart|roadie|ezcater)/i;
   }
 
   function isMerchantCandidate(value) {
@@ -3171,23 +2926,15 @@
     return true;
   }
 
-  function addMerchantCandidate(candidates, value, score, reason, index = 999, typeHint = "") {
+  function addMerchantCandidate(candidates, value, score, reason, index = 999) {
     const cleaned = cleanMerchantName(value);
     if (!isMerchantCandidate(cleaned)) return;
-    const knownRestaurant = detectKnownRestaurant(cleaned);
-    const knownStore = detectKnownStore(cleaned);
-    const finalValue = knownStore || knownRestaurant || cleaned;
-    const merchantType = knownStore
-      ? "store"
-      : knownRestaurant
-        ? "restaurant"
-        : typeHint === "merchant"
-          ? inferMerchantType(finalValue, `${reason} ${value}`)
-          : normalizeMerchantType(typeHint, finalValue, `${reason} ${value}`);
+    const known = detectKnownRestaurant(cleaned);
+    const finalValue = known || cleaned;
     const existing = candidates.find((candidate) => candidate.value.toLowerCase() === finalValue.toLowerCase());
-    const candidate = { value: finalValue, merchantType, score: score + (knownStore || knownRestaurant ? 6 : 0), reason, index };
+    const candidate = { value: finalValue, score: score + (known ? 6 : 0), reason, index };
     if (existing) {
-      if (candidate.score > existing.score || (candidate.score === existing.score && candidate.merchantType !== "merchant")) Object.assign(existing, candidate);
+      if (candidate.score > existing.score) Object.assign(existing, candidate);
       return;
     }
     candidates.push(candidate);
@@ -3209,7 +2956,7 @@
     }
   }
 
-  function detectMerchantLegacy(lines, normalizedText, platform = "") {
+  function detectMerchant(lines, normalizedText, platform = "") {
     const known = detectKnownRestaurant(normalizedText);
     const candidates = [];
     if (known) addMerchantCandidate(candidates, known, 18, "known restaurant", 0);
@@ -3249,91 +2996,6 @@
     return candidates[0].value;
   }
 
-  function extractMerchantFromTypedLabels(normalizedText, candidates) {
-    const stopWords = "(?:\\$|total|subtotal|distance|miles?|mi\\b|minutes?|mins?|estimated|guarantee|offer|accept|decline|drop[ -]?off|deliver(?:y)?|customer|order\\s*(?:id|#)|items?|directions?|navigate|address|pickup|pick up|restaurant|merchant|store|shop|retail|grocery)";
-    const merchantText = "([A-Za-z0-9&'.,()\\-\\s]{3,90}?)";
-    const patterns = [
-      { type: "restaurant", reason: "restaurant label", pattern: new RegExp("(?:restaurant|eatery)\\s*(?:name)?\\s*[:\\-]?\\s*" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") },
-      { type: "store", reason: "store label", pattern: new RegExp("(?:store|shop|retail(?:er)?|grocery|pharmacy)\\s*(?:name)?\\s*[:\\-]?\\s*" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") },
-      { type: "merchant", reason: "pickup label", pattern: new RegExp("(?:pickup|pick up|pick-up)\\s*(?:from|at|@|:)\\s*" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") },
-      { type: "merchant", reason: "destination label", pattern: new RegExp("(?:go to|head to|arrive at|navigate to)\\s*" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") },
-      { type: "merchant", reason: "merchant label", pattern: new RegExp("(?:merchant)\\s*(?:name)?\\s*[:\\-]?\\s*" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") },
-      { type: "merchant", reason: "order from label", pattern: new RegExp("(?:order from|from)\\s+" + merchantText + "(?=\\s+" + stopWords + "|$)", "gi") }
-    ];
-    for (const item of patterns) {
-      let match;
-      while ((match = item.pattern.exec(normalizedText)) !== null) {
-        addMerchantCandidate(candidates, match[1], 15, item.reason, match.index, item.type);
-      }
-    }
-  }
-
-  function detectMerchantDetailed(lines, normalizedText, platform = "") {
-    const candidates = [];
-    const knownStore = detectKnownStore(normalizedText);
-    const knownRestaurant = detectKnownRestaurant(normalizedText);
-    // Whole-screenshot brand matches are fallback evidence because map labels
-    // can contain unrelated stores or restaurants. Pickup-label and line-layout
-    // candidates below receive stronger scores.
-    if (knownStore) addMerchantCandidate(candidates, knownStore, 8, "known store", 0, "store");
-    if (knownRestaurant) addMerchantCandidate(candidates, knownRestaurant, 8, "known restaurant", 0, "restaurant");
-
-    extractMerchantFromTypedLabels(normalizedText, candidates);
-
-    lines.forEach((line, index) => {
-      const cleaned = cleanMerchantName(line);
-      const previous = lines[index - 1] || "";
-      const next = lines[index + 1] || "";
-      const context = `${previous} ${line} ${next}`;
-      const lowerLine = line.toLowerCase();
-      const lowerContext = context.toLowerCase();
-      if (!isMerchantCandidate(cleaned)) return;
-
-      let score = 2;
-      if (/pickup|pick up|pick-up|restaurant|merchant|store|shop|retail|grocery|from|order from|go to|head to|arrive at|navigate to/.test(lowerLine)) score += 10;
-      if (/pickup|pick up|pick-up|restaurant|merchant|store|shop|retail|grocery|from|order from|go to|head to|arrive at|navigate to/.test(lowerContext)) score += 5;
-      if (/\b\d+\s*min(?:ute)?s?\s*\([^)]*\bmi\b[^)]*\)\s*total\b/i.test(previous)) score += 10;
-      if (/cafe|caf(?:e|\u00e9)|coffee|pizza|taco|burger|grill|kitchen|deli|wings|bbq|barbecue|sushi|thai|mexican|chicken|subs?|sandwich|noodle|ramen|bakery|bistro|restaurant|steak|seafood|gyro|pasta|pub|bar\b|taqueria|cantina|smokehouse|diner|waffle|pancake|donut|doughnut/i.test(cleaned)) score += 5;
-      if (/grocery|market|supermarket|supercenter|pharmacy|warehouse|retail|department|electronics|hardware|club\b/i.test(cleaned)) score += 5;
-      if (/[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/.test(cleaned)) score += 2;
-      if (/['&]/.test(cleaned)) score += 1;
-      if (index <= 8) score += Math.max(0, 4 - Math.floor(index / 2));
-      if (platform && new RegExp(platform.replace(/\s+/g, "\\s*"), "i").test(cleaned)) score -= 10;
-
-      const typeHint = /\b(?:store|shop|retail|grocery|pharmacy)\b/i.test(lowerContext)
-        ? "store"
-        : /\b(?:restaurant|eatery)\b/i.test(lowerContext)
-          ? "restaurant"
-          : "merchant";
-      addMerchantCandidate(candidates, cleaned, score, "line/context", index, typeHint);
-
-      if (/^(?:pickup|pick up|pick-up|restaurant|merchant|store|shop|retail|grocery|go to|head to|arrive at|navigate to)\b/i.test(line)) {
-        const labelType = /^(?:store|shop|retail|grocery)\b/i.test(line)
-          ? "store"
-          : /^(?:restaurant|eatery)\b/i.test(line)
-            ? "restaurant"
-            : "merchant";
-        for (let offset = 1; offset <= 3; offset += 1) {
-          const nearby = lines[index + offset];
-          if (!nearby || looksLikeAddress(nearby)) continue;
-          addMerchantCandidate(candidates, nearby, 14 - offset, "near pickup label", index + offset, labelType);
-          break;
-        }
-      }
-    });
-
-    if (!candidates.length) {
-      const merchant = detectMerchantLegacy(lines, normalizedText, platform);
-      return { merchant, merchantType: normalizeMerchantType("", merchant) };
-    }
-    candidates.sort((a, b) => b.score - a.score || a.index - b.index || a.value.length - b.value.length);
-    return { merchant: candidates[0].value, merchantType: candidates[0].merchantType || "merchant" };
-  }
-
-  function detectMerchant(lines, normalizedText, platform = "") {
-    return detectMerchantDetailed(lines, normalizedText, platform).merchant;
-  }
-
   // Each app's driver interface has a distinctive vocabulary, not just a logo.
   // We identify the platform by matching that fingerprint (brand tokens PLUS the
   // UI terminology unique to each app) and scoring the evidence, so a stray
@@ -3341,110 +3003,92 @@
   // Signal format: [regex, weight, humanLabel].
   const platformFingerprints = {
     "DoorDash": [
-      [/\bdoordash\b/i, 15, "DoorDash"],
-      [/\bdoor\s*dash\b/i, 15, "Door Dash"],
-      [/\bdasher\b/i, 13, "Dasher"],
-      [/\bdasher\s*direct\b/i, 13, "DasherDirect"],
-      [/\bred\s*card\b/i, 10, "Red Card"],
-      [/\bearn\s*by\s*time\b/i, 10, "Earn by Time"],
-      [/\bearn\s*per\s*offer\b/i, 10, "Earn per Offer"],
-      [/\bdash\s*now\b/i, 10, "Dash Now"],
-      [/\bshop\s*(?:&|and)\s*deliver\b/i, 8, "Shop & Deliver"],
-      [/\bdeliver\s+by\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i, 7, "Deliver by time"],
-      [/\bcustomer\s+drop[ -]?off\b/i, 7, "Customer dropoff"],
+      [/\bdoordash\b/i, 10, "DoorDash"],
+      [/\bdoor\s*dash\b/i, 9, "Door Dash"],
+      [/\bdasher\b/i, 8, "Dasher"],
+      [/\bred\s*card\b/i, 7, "Red Card"],
+      [/\bdasher\s*direct\b/i, 7, "DasherDirect"],
       [/\bpeak\s*pay\b/i, 6, "Peak Pay"],
-      [/\bfast\s*pay\b/i, 5, "Fast Pay"],
-      [/\bhotspot/i, 4, "hotspots"]
+      [/\bearn\s*by\s*time\b/i, 6, "Earn by Time"],
+      [/\bearn\s*per\s*offer\b/i, 6, "Earn per Offer"],
+      [/\bdash\s*now\b/i, 6, "Dash Now"],
+      [/\bshop\s*(?:&|and)\s*deliver\b/i, 5, "Shop & Deliver"],
+      [/\bfast\s*pay\b/i, 4, "Fast Pay"],
+      [/\bhotspot/i, 3, "hotspots"],
+      [/\bdash\b/i, 3, "Dash"],
+      [/\bguaranteed\b/i, 2, "Guaranteed"],
+      [/\bdecline\b/i, 2, "Decline"]
     ],
     "Uber Eats": [
-      [/\buber\s*eats\b/i, 15, "Uber Eats"],
-      [/\bubereats\b/i, 15, "UberEats"],
-      [/\buber\s*eats\s*pro\b/i, 13, "Uber Eats Pro"],
-      [/\buber\s*(?:driver|delivery)\b/i, 12, "Uber delivery app"],
-      [/\btrip\s*radar\b/i, 13, "Trip Radar"],
-      [/\btrip\s*request\b/i, 11, "trip request"],
-      [/\btrip\s*supplement\b/i, 10, "trip supplement"],
-      [/\bdelivery\s*request\b/i, 8, "delivery request"],
-      [/\bexclusive\b/i, 6, "Exclusive offer"],
-      [/\b\d+\s*min(?:ute)?s?\s*\(\s*\d+(?:[.,]\d+)?\s*mi\s*\)\s*total\b/i, 7, "total-time layout"],
-      [/\baccept\s*request\b/i, 6, "Accept request"],
-      [/\bdelivery\s*partner\b/i, 6, "delivery partner"],
-      [/\bgo\s*offline\b/i, 3, "go offline"]
+      [/\buber\s*eats\b/i, 10, "Uber Eats"],
+      [/\bubereats\b/i, 10, "UberEats"],
+      [/\buber\s*eats\s*pro\b/i, 8, "Uber Eats Pro"],
+      [/\btrip\s*radar\b/i, 8, "Trip Radar"],
+      [/\baccept\s*request\b/i, 7, "Accept request"],
+      [/\btrip\s*request\b/i, 7, "trip request"],
+      [/\btrip\s*supplement\b/i, 7, "trip supplement"],
+      [/\buber\s*one\b/i, 6, "Uber One"],
+      [/\bdelivery\s*partner\b/i, 5, "delivery partner"],
+      [/\buber\b/i, 5, "Uber"],
+      [/\bincludes?\s*(?:a\s*)?trip\b/i, 4, "included trip"],
+      [/\bgo\s*offline\b/i, 2, "go offline"],
+      [/\btrip\b/i, 2, "Trip"]
     ],
     "Grubhub": [
-      [/\bgrubhub\b/i, 15, "Grubhub"],
-      [/\bgrub\s*hub\b/i, 15, "Grub Hub"],
-      [/\bgrubhub\s*\+/i, 12, "Grubhub+"],
-      [/\bscheduled?\s*block/i, 10, "scheduled block"],
-      [/\baccept\s*offer\b/i, 6, "Accept offer"],
-      [/\bdiner\b/i, 4, "diner"],
-      [/\btoolkit\b/i, 4, "toolkit"]
+      [/\bgrubhub\b/i, 10, "Grubhub"],
+      [/\bgrub\s*hub\b/i, 9, "Grub Hub"],
+      [/\baccept\s*offer\b/i, 7, "Accept offer"],
+      [/\bdiner\b/i, 7, "diner"],
+      [/\bgrubhub\s*\+/i, 5, "Grubhub+"],
+      [/\bscheduled?\s*block/i, 4, "scheduled block"],
+      [/\btoolkit\b/i, 3, "toolkit"],
+      [/\bblock\b/i, 3, "block scheduling"],
+      [/\bcatering\b/i, 3, "Catering"],
+      [/\bcare\b/i, 2, "Grubhub Care"]
     ],
     "Instacart": [
-      [/\binstacart\b/i, 15, "Instacart"],
-      [/\bfull[-\s]*service\s*(?:shop|batch)/i, 13, "full-service batch"],
-      [/\bitems?\s*to\s*shop\b/i, 8, "items to shop"],
-      [/\bshopper\b/i, 6, "shopper"],
-      [/\bbatch\b/i, 3, "batch"],
+      [/\binstacart\b/i, 10, "Instacart"],
+      [/\bfull[-\s]*service\s*(?:shop|batch)/i, 6, "full-service batch"],
+      [/\bshopper\b/i, 5, "shopper"],
+      [/\bbatch\b/i, 5, "batch"],
+      [/\bitems?\s*to\s*shop\b/i, 4, "items to shop"],
       [/\breplacement/i, 3, "replacements"],
       [/\bpick\s*&?\s*pack/i, 3, "pick & pack"]
     ],
     "Amazon Flex": [
-      [/\bamazon\s*flex\b/i, 15, "Amazon Flex"],
-      [/\bdelivery\s*block\b/i, 10, "delivery block"],
-      [/\binstant\s*offer\b/i, 8, "Instant Offer"],
-      [/\bsub[-\s]*same\s*day\b/i, 8, "Sub-Same Day"],
-      [/\bamazon\s*(?:com|fresh)\b/i, 6, "Amazon delivery"],
-      [/\bwarehouse\b/i, 3, "warehouse"]
+      [/\bamazon\s*flex\b/i, 12, "Amazon Flex"],
+      [/\bdelivery\s*block\b/i, 8, "delivery block"],
+      [/\bflex\s*app\b/i, 7, "Flex app"],
+      [/\bsub[-\s]*same[-\s]*day\b/i, 5, "Sub Same-Day"]
     ],
     "Spark": [
-      [/\bspark\s*driver\b/i, 15, "Spark Driver"],
-      [/\bround\s*robin\b/i, 10, "Round Robin"],
-      [/\bexpress\s*delivery\b/i, 7, "express delivery"],
-      [/\bwalmart\b/i, 3, "Walmart"],
-      [/\bspark\b/i, 2, "Spark"],
-      [/\bcurbside\b/i, 2, "curbside"]
+      [/\bspark\s*driver\b/i, 10, "Spark Driver"],
+      [/\bwalmart\b/i, 7, "Walmart"],
+      [/\bspark\b/i, 6, "Spark"],
+      [/\bround\s*robin\b/i, 4, "Round Robin"],
+      [/\bcurbside\b/i, 3, "curbside"]
     ],
     "Roadie": [
-      [/\broadie\b/i, 15, "Roadie"],
-      [/\bbundled\s*gig\b/i, 10, "bundled gig"],
-      [/\broute\s*stops?\b/i, 8, "route stops"],
-      [/\bgig\b/i, 1, "gig"]
+      [/\broadie\b/i, 10, "Roadie"],
+      [/\bgig\b/i, 2, "gig"]
     ],
     "Catering": [
-      [/\bezcater\b/i, 15, "ezCater"],
-      [/\bcater\s*valley\b/i, 15, "CaterValley"],
-      [/\bdeliverthat\b/i, 15, "DeliverThat"],
-      [/\bdlivrd\b/i, 15, "dlivrd"],
-      [/\bcatering\s*(?:order|delivery)\b/i, 5, "catering order"],
-      [/\bcatering\b/i, 1, "catering"]
+      [/\bezcater\b/i, 9, "ezCater"],
+      [/\bcater\s*valley\b/i, 8, "CaterValley"],
+      [/\bcatering\s*order\b/i, 6, "catering order"],
+      [/\bcatering\b/i, 6, "Catering"]
     ]
   };
 
-  // Each profile is qualified independently below. We deliberately do not
-  // subtract points for a stray competitor word: a real brand/header match
-  // should still win over OCR noise from another app name or generic phrase.
-  const platformCrossPenalties = [];
+  // When a competitor hallmark appears, actively argue against the other apps so
+  // a close, low-evidence call doesn't tip the wrong way.
+  const platformCrossPenalties = [
+    [/\bdiner\b/i, { "Uber Eats": -3, "DoorDash": -3 }],
+    [/\bdasher\b/i, { "Uber Eats": -4, "Grubhub": -4 }],
+    [/\btrip\s*(?:request|radar)\b/i, { "DoorDash": -3, "Grubhub": -3 }]
+  ];
 
-  const platformBrandLabels = {
-    "DoorDash": new Set(["DoorDash", "Door Dash"]),
-    "Uber Eats": new Set(["Uber Eats", "UberEats", "Uber Eats Pro", "Uber delivery app"]),
-    "Grubhub": new Set(["Grubhub", "Grub Hub", "Grubhub+"]),
-    "Instacart": new Set(["Instacart"]),
-    "Amazon Flex": new Set(["Amazon Flex"]),
-    "Spark": new Set(["Spark Driver"]),
-    "Roadie": new Set(["Roadie"]),
-    "Catering": new Set(["ezCater", "CaterValley", "DeliverThat", "dlivrd"])
-  };
-
-  const visualPlatformHints = {
-    red: [["DoorDash", "red offer accent"]],
-    green: [["Uber Eats", "green offer accent"]],
-    orange: [["Grubhub", "orange offer accent"]],
-    blue: [["Amazon Flex", "blue offer accent"], ["Spark", "blue offer accent"]]
-  };
-
-  function detectPlatformDetailed(text, visualProfile = emptyVisualProfile()) {
+  function detectPlatformDetailed(text) {
     const source = String(text || "");
     if (!source.trim()) return { platform: "", platformConfidence: 0, evidence: [], scores: {} };
 
@@ -3463,16 +3107,6 @@
       if (score > 0) { scores[platform] = score; evidenceByPlatform[platform] = hits; }
     }
 
-    const visual = normalizeVisualProfile(visualProfile);
-    if (visual.dominant && visual.confidence >= 0.4) {
-      const weight = visual.confidence >= 0.72 ? 7 : 6;
-      for (const [platform, label] of visualPlatformHints[visual.dominant] || []) {
-        scores[platform] = (scores[platform] || 0) + weight;
-        evidenceByPlatform[platform] ||= [];
-        evidenceByPlatform[platform].push({ label, weight, visual: true });
-      }
-    }
-
     for (const [regex, penalties] of platformCrossPenalties) {
       if (!regex.test(source)) continue;
       for (const [platform, penalty] of Object.entries(penalties)) {
@@ -3480,64 +3114,22 @@
       }
     }
 
-    const candidates = Object.entries(scores)
-      .filter(([, score]) => score > 0)
-      .map(([platform, score]) => {
-        const hits = evidenceByPlatform[platform] || [];
-        const strongHits = hits.filter((hit) => hit.weight >= 10);
-        const mediumHits = hits.filter((hit) => hit.weight >= 5);
-        return {
-          platform,
-          score,
-          hits,
-          hasBrandEvidence: hits.some((hit) => platformBrandLabels[platform]?.has(hit.label)),
-          hasStrongEvidence: strongHits.length > 0,
-          hasCombinedEvidence: mediumHits.length >= 2 && mediumHits.reduce((sum, hit) => sum + hit.weight, 0) >= 12
-        };
-      });
-    if (!candidates.length) return { platform: "", platformConfidence: 0, evidence: [], scores, reason: "No platform evidence found" };
+    const ranked = Object.entries(scores).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]);
+    if (!ranked.length) return { platform: "", platformConfidence: 0, evidence: [], scores };
 
-    // A platform must have a branded or distinctive workflow signal. Generic
-    // delivery words alone (trip, gig, offer, catering, Walmart, etc.) never
-    // auto-label a screenshot, which is safer than guessing the wrong app.
-    const ranked = candidates
-      .filter((candidate) => candidate.hasStrongEvidence || candidate.hasCombinedEvidence)
-      .sort((a, b) => b.score - a.score);
-    if (!ranked.length) {
-      return { platform: "", platformConfidence: 0, evidence: [], scores, reason: "Only generic delivery terms found" };
-    }
+    const [topPlatform, topScore] = ranked[0];
+    const runnerUp = ranked[1] ? ranked[1][1] : 0;
+    const margin = topScore - runnerUp;
+    let confidence = Math.min(99, Math.round(
+      Math.min(topScore, 12) / 12 * 65 + Math.min(margin, 10) / 10 * 34
+    ));
+    const hasBrandHit = (evidenceByPlatform[topPlatform] || []).some((h) => h.weight >= 9);
+    if (hasBrandHit) confidence = Math.max(confidence, 88);
 
-    const top = ranked[0];
-    const runnerUp = ranked[1] || null;
-    const margin = top.score - (runnerUp ? runnerUp.score : 0);
-    const topHasBrandEvidence = top.hasBrandEvidence;
-    const runnerHasBrandEvidence = runnerUp && runnerUp.hasBrandEvidence;
-    if (runnerUp && (
-      (topHasBrandEvidence && runnerHasBrandEvidence)
-      || (!topHasBrandEvidence && runnerHasBrandEvidence && margin <= 8)
-      || (!topHasBrandEvidence && !runnerHasBrandEvidence && margin <= 3)
-    )) {
-      return {
-        platform: "",
-        platformConfidence: 0,
-        evidence: top.hits.sort((a, b) => b.weight - a.weight).map((hit) => hit.label),
-        scores,
-        reason: "Conflicting platform evidence"
-      };
-    }
-
-    let confidence = topHasBrandEvidence ? 90 : 74;
-    confidence += Math.min(8, Math.max(0, margin));
-    if (top.hits.length >= 2) confidence += 2;
-    const evidence = top.hits.sort((a, b) => b.weight - a.weight).map((hit) => hit.label);
-    return {
-      platform: top.platform,
-      platformConfidence: Math.min(99, confidence),
-      evidence,
-      scores,
-      visualMatched: top.hits.some((hit) => hit.visual),
-      reason: ""
-    };
+    const evidence = (evidenceByPlatform[topPlatform] || [])
+      .sort((a, b) => b.weight - a.weight)
+      .map((h) => h.label);
+    return { platform: topPlatform, platformConfidence: confidence, evidence, scores };
   }
 
   function detectPlatform(text) {
@@ -3628,12 +3220,6 @@
 
     const existingId = els.editDeliveryId.value;
     const existing = existingId ? deliveries.find((d) => d.id === existingId) : null;
-    const merchant = cleanText(els.merchantInput?.value || existing?.merchant || "", 120);
-    const merchantType = lastOCRParsed?.merchant === merchant
-      ? lastOCRParsed.merchantType
-      : existing?.merchant === merchant
-        ? existing.merchantType || ""
-        : "";
     const now = new Date().toISOString();
     const delivery = normalizeDelivery({
       id: existingId || makeId(),
@@ -3642,8 +3228,7 @@
       miles,
       minutes,
       zone: els.zoneInput.value || settings.defaultZone || "",
-      merchant,
-      merchantType,
+      merchant: els.merchantInput?.value || existing?.merchant || "",
       notes: els.notesInput.value,
       source: existing ? existing.source : (lastOCRText ? "ocr" : "manual"),
       ocrText: lastOCRText || existing?.ocrText || "",
@@ -3767,19 +3352,96 @@
     toast("Settings saved.");
   }
 
+  function decisionFromCurrentOffer() {
+    const pay = num(els.offerPayInput.value);
+    const miles = num(els.offerMilesInput.value);
+    const minutes = num(els.offerMinutesInput.value);
+    const evaluation = evaluateOffer(pay, miles, minutes);
+    if (evaluation.kind === "neutral" || pay <= 0 || miles < 0 || minutes <= 0) return null;
+    return normalizeDecision({
+      id: makeId(),
+      outcome: String(evaluation.label || evaluation.title || evaluation.kind).toUpperCase().includes("DECLINE") ? "DECLINE" : String(evaluation.label || evaluation.title || evaluation.kind).toUpperCase().includes("BORDER") ? "BORDERLINE" : "ACCEPT",
+      company: els.offerCompanyInput.value,
+      pay,
+      miles,
+      minutes,
+      zone: els.offerZoneInput.value,
+      note: els.offerNoteInput.value,
+      source: "calculator",
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  function logCurrentDecision(options = {}) {
+    const decision = decisionFromCurrentOffer();
+    if (!decision) return options.silent ? null : toast("Enter a valid offer and calculate it before logging.");
+    decisions.push(decision);
+    writeJSON(DECISIONS_KEY, decisions);
+    renderDecisionLog();
+    if (!options.silent) toast(`${decision.outcome} decision logged.`);
+    return decision;
+  }
+
+  function renderDecisionLog() {
+    if (!els.decisionLogList) return;
+    const today = decisions.filter((d) => isToday(d.createdAt));
+    const counts = { ACCEPT: 0, BORDERLINE: 0, DECLINE: 0 };
+    today.forEach((d) => counts[d.outcome] = (counts[d.outcome] || 0) + 1);
+    if (els.decisionLogStatus) els.decisionLogStatus.textContent = today.length ? `${today.length} today` : "No decisions yet";
+    if (els.decisionLogSummary) els.decisionLogSummary.textContent = today.length
+      ? `${counts.ACCEPT} accept · ${counts.BORDERLINE} borderline · ${counts.DECLINE} decline`
+      : "Log a recommendation to remember what you accepted, passed on, or treated as borderline. Decisions stay in this browser.";
+    if (els.decisionLogMetrics) els.decisionLogMetrics.innerHTML = ["ACCEPT", "BORDERLINE", "DECLINE"].map((key) => `<span><strong>${counts[key]}</strong><small>${key.toLowerCase()}</small></span>`).join("");
+    const rows = decisions.slice(-20).reverse();
+    if (!rows.length) {
+      els.decisionLogList.className = "decision-log-list empty";
+      els.decisionLogList.textContent = "No order decisions logged yet.";
+      return;
+    }
+    els.decisionLogList.className = "decision-log-list";
+    els.decisionLogList.innerHTML = rows.map((d) => `<article class="history-item"><div class="history-top"><strong>${escapeHTML(d.outcome)} · ${escapeHTML(d.company)}</strong><strong>${money.format(d.pay)}</strong></div><div class="history-meta">${d.miles.toFixed(1)} mi · ${d.minutes} min${d.zone ? ` · ${escapeHTML(d.zone)}` : ""}</div></article>`).join("");
+  }
+
+  function exportDecisionCSV() {
+    const rows = [["createdAt", "outcome", "company", "pay", "miles", "minutes", "zone", "note"]];
+    decisions.forEach((d) => rows.push([d.createdAt, d.outcome, d.company, d.pay.toFixed(2), d.miles.toFixed(1), d.minutes, d.zone, d.note]));
+    downloadFile(`giglens-decisions-${todayKey()}.csv`, csvRowsToText(rows), "text/csv;charset=utf-8");
+  }
+
+  function togglePauseShift() {
+    if (!shift.active || !shift.startedAt || !isToday(shift.startedAt)) return toast("Start the day before taking a break.");
+    const now = new Date().toISOString();
+    const breaks = [...(shift.breaks || [])];
+    if (shift.paused) {
+      const openIndex = breaks.map((item) => item.endedAt).lastIndexOf(null);
+      if (openIndex >= 0) breaks[openIndex] = { ...breaks[openIndex], endedAt: now };
+      shift = normalizeShift({ ...shift, paused: false, pausedAt: null, breaks });
+      toast("Shift resumed. Active time is running again.");
+    } else {
+      breaks.push({ startedAt: now, endedAt: null });
+      shift = normalizeShift({ ...shift, paused: true, pausedAt: now, breaks });
+      toast("Shift paused. Break time will not count toward hourly pace.");
+    }
+    writeJSON(SHIFT_KEY, shift);
+    render();
+  }
+
   function toggleShift() {
-    if (activeShiftToday()) {
+    if (shift.active && shift.startedAt && isToday(shift.startedAt)) {
       const now = new Date().toISOString();
+      if (shift.paused) {
+        const breaks = [...(shift.breaks || [])];
+        const openIndex = breaks.map((item) => item.endedAt).lastIndexOf(null);
+        if (openIndex >= 0) breaks[openIndex] = { ...breaks[openIndex], endedAt: now };
+        shift = normalizeShift({ ...shift, paused: false, pausedAt: null, breaks });
+      }
       const todays = todayDeliveries();
-      shift = normalizeShift({
-        ...closeCurrentShiftBreak(shift, now),
-        active: false,
-        startedAt: shift.startedAt,
-        endedAt: now,
-      });
       const recap = buildDriverRecap(todays, calculate(todays), { startedAt: shift.startedAt, endedAt: now });
       shift = normalizeShift({
         ...shift,
+        active: false,
+        startedAt: shift.startedAt,
+        endedAt: now,
         lastSummary: recap.text,
         shiftHistory: [
           ...(shift.shiftHistory || []),
@@ -3797,33 +3459,8 @@
       });
       toast("Day ended. Recap saved to shift history.");
     } else {
-      shift = normalizeShift({
-        ...shift,
-        active: true,
-        startedAt: new Date().toISOString(),
-        endedAt: null,
-        paused: false,
-        pausedAt: null,
-        breaks: []
-      });
+      shift = normalizeShift({ ...shift, active: true, paused: false, pausedAt: null, breaks: [], startedAt: new Date().toISOString(), endedAt: null });
       toast("Day started. The clock is running.");
-    }
-    writeJSON(SHIFT_KEY, shift);
-    render();
-  }
-
-  function togglePause() {
-    if (!activeShiftToday()) {
-      toast("Start Day before pausing your shift.");
-      return;
-    }
-    const now = new Date().toISOString();
-    if (shift.paused) {
-      shift = normalizeShift(closeCurrentShiftBreak(shift, now));
-      toast("Break ended. Your active shift clock is running again.");
-    } else {
-      shift = normalizeShift({ ...shift, paused: true, pausedAt: now });
-      toast("Shift paused. Break time is excluded from active hours.");
     }
     writeJSON(SHIFT_KEY, shift);
     render();
@@ -3924,14 +3561,6 @@
     return csvRowsToText([header, ...rows]);
   }
 
-  function buildDecisionCSV() {
-    const header = ["date", "decision", "company", "zone", "pay", "miles", "minutes", "note"];
-    const rows = [...decisionLog]
-      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-      .map((item) => [item.createdAt, item.outcome, item.company, item.zone || "", item.pay, item.miles, item.minutes, item.note || ""]);
-    return csvRowsToText([header, ...rows]);
-  }
-
   async function shareOrDownload(content, filename, type) {
     if (navigator.canShare && typeof File === "function") {
       try {
@@ -3959,19 +3588,14 @@
     const csv = "﻿" + buildCSV(kind);
     const suffixMap = { tax: "tax", daily: "daily-summary", standard: "deliveries" };
     const labelMap = { tax: "Tax CSV exported.", daily: "Daily summary CSV exported.", standard: "CSV exported." };
-    await shareOrDownload(csv, `${APP_SLUG}-${suffixMap[kind] || "deliveries"}-${todayKey()}.csv`, "text/csv;charset=utf-8");
+    await shareOrDownload(csv, `giglens-${suffixMap[kind] || "deliveries"}-${todayKey()}.csv`, "text/csv;charset=utf-8");
     const activeCount = activeDeliveriesSorted().length;
     toast(activeCount ? (labelMap[kind] || "CSV exported.") : `${labelMap[kind] || "CSV exported."} Header-only file because no deliveries are saved yet.`);
   }
 
-  async function exportDecisionsCSV() {
-    await shareOrDownload("ï»¿" + buildDecisionCSV(), `${APP_SLUG}-decisions-${todayKey()}.csv`, "text/csv;charset=utf-8");
-    toast(decisionLog.length ? "Decision CSV exported." : "Decision CSV exported. Header-only file because no decisions are logged yet.");
-  }
-
   function buildBackupPayload(reason = "manual export") {
     return {
-      app: APP_NAME,
+      app: "GigLens",
       version: BACKUP_VERSION,
       dataVersion: DATA_VERSION,
       appDataVersion: DATA_VERSION,
@@ -3979,21 +3603,21 @@
       savedAt: new Date().toISOString(),
       reason,
       schema: {
-        delivery: ["id", "date", "createdAt", "updatedAt", "company", "merchant", "merchantType", "restaurant", "store", "earnings", "miles", "minutes", "zone", "note", "notes", "source", "ocrText", "ocrConfidence", "tags", "deleted", "version"],
-        decision: ["id", "outcome", "company", "zone", "pay", "miles", "minutes", "note", "source", "createdAt", "version"],
+        delivery: ["id", "date", "createdAt", "updatedAt", "company", "merchant", "restaurant", "earnings", "miles", "minutes", "zone", "note", "notes", "source", "ocrText", "ocrConfidence", "tags", "deleted", "version"],
         settings: ["dailyGoal", "defaultCompany", "defaultZone", "gasPrice", "vehicleMpg", "maintenanceCostPerMile", "mileageDeductionRate", "minimumDollarPerMile", "minimumDollarPerHour", "minimumPayout", "maxMiles", "customZones", "theme", "appDataVersion"],
-        shift: ["active", "startedAt", "endedAt", "paused", "pausedAt", "breaks", "lastSummary", "shiftHistory", "recommendation", "metrics", "appDataVersion"]
+        shift: ["active", "paused", "pausedAt", "breaks", "startedAt", "endedAt", "lastSummary", "shiftHistory", "recommendation", "metrics", "appDataVersion"],
+        decision: ["id", "outcome", "company", "pay", "miles", "minutes", "zone", "note", "source", "createdAt", "version"]
       },
       settings,
       shift,
       deliveries,
-      decisionLog
+      decisions
     };
   }
 
   async function exportBackup() {
     const backup = buildBackupPayload("manual export");
-    await shareOrDownload(JSON.stringify(backup, null, 2), `${APP_SLUG}-backup-${todayKey()}.json`, "application/json;charset=utf-8");
+    await shareOrDownload(JSON.stringify(backup, null, 2), `giglens-backup-${todayKey()}.json`, "application/json;charset=utf-8");
     toast("Backup exported.");
   }
 
@@ -4008,23 +3632,19 @@
       return { valid: false, message: "Backup file must be a JSON object." };
     }
     const hasDeliveries = Array.isArray(parsed.deliveries);
-    const hasDecisionLog = Array.isArray(parsed.decisionLog);
+    const rawDecisions = Array.isArray(parsed.decisions) ? parsed.decisions : [];
+    const importedDecisions = normalizeDecisions(rawDecisions);
     const settingsIncluded = Boolean(parsed.settings && typeof parsed.settings === "object" && !Array.isArray(parsed.settings));
     const shiftIncluded = Boolean(parsed.shift && typeof parsed.shift === "object" && !Array.isArray(parsed.shift));
-    if (!hasDeliveries && !hasDecisionLog && !settingsIncluded && !shiftIncluded) {
-      return { valid: false, message: "Backup must include deliveries, decisions, settings, or shift data." };
+    if (!hasDeliveries && !settingsIncluded && !shiftIncluded) {
+      return { valid: false, message: "Backup must include deliveries, settings, or shift data." };
     }
     const rawDeliveries = hasDeliveries ? parsed.deliveries : [];
     const importedDeliveries = rawDeliveries
       .map((d) => normalizeDelivery({ ...d, source: validSources.has(d?.source) ? d.source : "import" }))
       .filter(Boolean);
     if (rawDeliveries.length && !importedDeliveries.length) {
-      return { valid: false, message: `Backup contains deliveries, but none are valid ${APP_NAME} records.` };
-    }
-    const rawDecisions = hasDecisionLog ? parsed.decisionLog : [];
-    const importedDecisions = normalizeDecisionLog(rawDecisions);
-    if (rawDecisions.length && !importedDecisions.length) {
-      return { valid: false, message: `Backup contains decisions, but none are valid ${APP_NAME} decision records.` };
+      return { valid: false, message: "Backup contains deliveries, but none are valid GigLens records." };
     }
     return {
       valid: true,
@@ -4032,10 +3652,9 @@
       exportedAt: parsed.exportedAt || parsed.savedAt || null,
       appDataVersion: parsed.appDataVersion || parsed.dataVersion || parsed.version || "unknown",
       deliveries: importedDeliveries,
-      deliveryCount: importedDeliveries.length,
-      decisionLog: importedDecisions,
+      decisions: importedDecisions,
       decisionCount: importedDecisions.length,
-      decisionIncluded: hasDecisionLog,
+      deliveryCount: importedDeliveries.length,
       settingsIncluded,
       shiftIncluded,
       settings: settingsIncluded ? normalizeSettings(parsed.settings) : null,
@@ -4056,7 +3675,7 @@
     if (els.importPreviewMeta) {
       els.importPreviewMeta.innerHTML = `
         <div><span>Deliveries</span><strong>${pendingImport.deliveryCount}</strong></div>
-        <div><span>Decisions</span><strong>${pendingImport.decisionIncluded ? pendingImport.decisionCount : "Not included"}</strong></div>
+        <div><span>Decisions</span><strong>${pendingImport.decisionCount || 0}</strong></div>
         <div><span>Settings</span><strong>${pendingImport.settingsIncluded ? "Included" : "Not included"}</strong></div>
         <div><span>Shift</span><strong>${pendingImport.shiftIncluded ? "Included" : "Not included"}</strong></div>
         <div><span>Exported</span><strong>${escapeHTML(parseBackupDate(pendingImport.exportedAt))}</strong></div>
@@ -4088,7 +3707,7 @@
       const validation = validateBackupPayload(parsed);
       if (!validation.valid) {
         clearPendingImport(false);
-        toast(validation.message || `Invalid ${APP_NAME} backup file.`);
+        toast(validation.message || "Invalid GigLens backup file.");
         return;
       }
       pendingImport = validation;
@@ -4140,32 +3759,6 @@
     return { deliveries: merged, added, skipped };
   }
 
-  function mergeImportedDecisions(currentDecisions, importedDecisions) {
-    const seen = new Set();
-    const merged = [];
-    currentDecisions.forEach((item) => {
-      const normalized = normalizeDecision(item);
-      if (normalized && !seen.has(normalized.id)) {
-        seen.add(normalized.id);
-        merged.push(normalized);
-      }
-    });
-    let added = 0;
-    let skipped = 0;
-    importedDecisions.forEach((item) => {
-      const normalized = normalizeDecision(item);
-      if (!normalized) return;
-      if (seen.has(normalized.id)) {
-        skipped += 1;
-        return;
-      }
-      seen.add(normalized.id);
-      merged.push(normalized);
-      added += 1;
-    });
-    return { decisionLog: merged.slice(-500), added, skipped };
-  }
-
   function confirmImportBackup() {
     if (!pendingImport) return toast("Choose a backup file first.");
     const mode = els.importModeInput?.value === "replace" ? "replace" : "merge";
@@ -4174,7 +3767,7 @@
     saveImportRollback(`pre-${mode} import rollback`);
     if (mode === "replace") {
       deliveries = normalizeDeliveries(pendingImport.deliveries);
-      decisionLog = normalizeDecisionLog(pendingImport.decisionLog);
+      decisions = normalizeDecisions(pendingImport.decisions || []);
       if (pendingImport.settingsIncluded) settings = normalizeSettings(pendingImport.settings);
       if (pendingImport.shiftIncluded) shift = normalizeShift(pendingImport.shift);
       persistNormalizedState();
@@ -4186,12 +3779,15 @@
     }
     const result = mergeImportedDeliveries(deliveries, pendingImport.deliveries);
     deliveries = result.deliveries;
-    const decisionResult = mergeImportedDecisions(decisionLog, pendingImport.decisionLog);
-    decisionLog = decisionResult.decisionLog;
-    persistNormalizedState();
+    const existingDecisionIds = new Set(decisions.map((item) => item.id));
+    for (const item of normalizeDecisions(pendingImport.decisions || [])) {
+      if (!existingDecisionIds.has(item.id)) { decisions.push(item); existingDecisionIds.add(item.id); }
+    }
+    writeJSON(STORE_KEY, deliveries);
+    writeJSON(DECISIONS_KEY, decisions);
     render();
     clearPendingImport();
-    toast(`Backup merged. Added ${result.added} deliveries and ${decisionResult.added} decisions; skipped ${result.skipped + decisionResult.skipped} duplicates.`);
+    toast(`Backup merged. Added ${result.added} deliveries; skipped ${result.skipped} duplicates.`);
   }
 
   function restoreRollback() {
@@ -4200,7 +3796,7 @@
     if (!rollback || !validation.valid) return toast("No valid import rollback backup found.");
     if (!confirm(`Restore rollback from ${parseBackupDate(rollback.savedAt || rollback.exportedAt)}? This replaces current local data.`)) return;
     deliveries = normalizeDeliveries(validation.deliveries);
-    decisionLog = normalizeDecisionLog(validation.decisionLog);
+    decisions = normalizeDecisions(validation.decisions || []);
     settings = validation.settingsIncluded ? normalizeSettings(validation.settings) : settings;
     shift = validation.shiftIncluded ? normalizeShift(validation.shift) : shift;
     persistNormalizedState();
@@ -4240,7 +3836,7 @@
       reason: "pre-emergency-restore rollback"
     });
     deliveries = normalizeDeliveries(validation.deliveries);
-    decisionLog = normalizeDecisionLog(validation.decisionLog);
+    decisions = normalizeDecisions(validation.decisions || []);
     settings = validation.settingsIncluded ? normalizeSettings(validation.settings) : settings;
     shift = validation.shiftIncluded ? normalizeShift(validation.shift) : shift;
     persistNormalizedState();
@@ -4267,15 +3863,15 @@
   }
 
   function clearAllLocalData() {
-    if (!doubleConfirmDanger(`Clear all ${APP_NAME} local data`, "DELETE")) return toast("Clear all data canceled.");
+    if (!doubleConfirmDanger("Clear all GigLens local data", "DELETE")) return toast("Clear all data canceled.");
     saveSafetySnapshot("pre-clear-all-data snapshot");
     deliveries = [];
-    decisionLog = [];
+    decisions = [];
     settings = normalizeSettings({});
     shift = normalizeShift({ active: false, startedAt: null, endedAt: null, shiftHistory: [] });
     persistNormalizedState();
     render();
-    toast(`All active ${APP_NAME} data cleared. Emergency restore remains available on this browser.`);
+    toast("All active GigLens data cleared. Emergency restore remains available on this browser.");
   }
 
   async function copySummary() {
@@ -4308,6 +3904,7 @@
     }
     const company = allowedCompanies.has(els.offerCompanyInput.value) ? els.offerCompanyInput.value : settings.defaultCompany;
     const note = cleanText(els.offerNoteInput.value || "Saved from accept calculator", 400);
+    logCurrentDecision({ silent: true });
     const now = new Date().toISOString();
     const delivery = normalizeDelivery({
       id: makeId(),
@@ -4324,13 +3921,12 @@
       version: DATA_VERSION
     });
     if (!delivery) return toast("Could not save this offer.");
-    const logged = recordDecision(decision, { pay, miles, minutes });
     deliveries.push(delivery);
     writeJSON(STORE_KEY, deliveries);
     clearOfferCalculator();
     render();
     showTab("today");
-    toast(`${decision.title} offer saved as a completed delivery${logged ? " and decision logged" : ""}.`);
+    toast(`${decision.title} offer saved as a completed delivery.`);
   }
 
   function flagInvalid(input) {
@@ -4387,7 +3983,7 @@
     els.copySummaryBtn.addEventListener("click", copySummary);
     els.shiftBtn.addEventListener("click", toggleShift);
     if (els.heroShiftBtn) els.heroShiftBtn.addEventListener("click", toggleShift);
-    if (els.pauseShiftBtn) els.pauseShiftBtn.addEventListener("click", togglePause);
+    if (els.pauseShiftBtn) els.pauseShiftBtn.addEventListener("click", togglePauseShift);
     els.toast.addEventListener("click", (event) => {
       if (event.target.closest("[data-toast-action]") && toastAction) {
         const action = toastAction;
@@ -4414,11 +4010,11 @@
     [els.earningsInput, els.milesInput, els.minutesInput].forEach((input) => input.addEventListener("input", renderDeliveryPreview));
     [els.offerPayInput, els.offerMilesInput, els.offerMinutesInput, els.offerCompanyInput, els.offerZoneInput, els.offerNoteInput].forEach((input) => input.addEventListener("input", renderDecision));
     els.calculateOfferBtn.addEventListener("click", () => renderDecision({ announce: true }));
+    if (els.logDecisionBtn) els.logDecisionBtn.addEventListener("click", () => logCurrentDecision());
+    if (els.exportDecisionsBtn) els.exportDecisionsBtn.addEventListener("click", exportDecisionCSV);
     els.clearOfferBtn.addEventListener("click", () => { clearOfferCalculator(); toast("Calculator cleared."); });
     els.copyDecisionBtn.addEventListener("click", copyDecisionSummary);
-    els.logDecisionBtn.addEventListener("click", logCurrentDecision);
     els.saveOfferAsDeliveryBtn.addEventListener("click", saveOfferAsDelivery);
-    els.exportDecisionsBtn.addEventListener("click", exportDecisionsCSV);
     els.historyList.addEventListener("click", (event) => {
       const action = event.target.closest("[data-delete],[data-edit],[data-duplicate],[data-open-add]");
       if (!action) return;
@@ -4465,11 +4061,6 @@
   }
 
   function init() {
-    migrateLegacyStorage();
-    deliveries = normalizeDeliveries(readJSON(STORE_KEY, []));
-    decisionLog = normalizeDecisionLog(readJSON(DECISIONS_KEY, []));
-    settings = normalizeSettings(readJSON(SETTINGS_KEY, {}));
-    shift = normalizeShift(readJSON(SHIFT_KEY, { active: false, startedAt: null, endedAt: null }));
     persistNormalizedState();
     els.companyInput.value = settings.defaultCompany;
     els.offerCompanyInput.value = settings.defaultCompany;

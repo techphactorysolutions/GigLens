@@ -1,12 +1,12 @@
-# GigLens Deployment Guide
+# DriveLedger Deployment Guide
 
-GigLens is a static, local-first PWA. It does not need a backend, database server, build step, or environment variables. You can deploy it with Netlify Drop by dragging the unzipped project folder into the Netlify Drop upload area.
+DriveLedger is a static, local-first PWA. It does not need a backend, database server, build step, or environment variables. You can deploy it with Netlify Drop by dragging the unzipped project folder into the Netlify Drop upload area.
 
 ## GitHub Pages deployment
 
-GigLens can run from GitHub Pages as a plain static site. This package includes `.nojekyll` so GitHub Pages does not process the app with Jekyll, and `404.html` as a simple fallback page.
+DriveLedger can run from GitHub Pages as a plain static site. This package includes `.nojekyll` so GitHub Pages does not process the app with Jekyll, and `404.html` as a simple fallback page.
 
-1. Download the latest GigLens release ZIP.
+1. Download the latest DriveLedger release ZIP.
 2. Unzip it.
 3. Upload the **contents** of the unzipped folder to the root of your GitHub repository. Do not upload only the ZIP file. Do not leave the app inside a nested folder.
 4. Confirm these files are visible at the repository root:
@@ -17,10 +17,8 @@ GigLens can run from GitHub Pages as a plain static site. This package includes 
    - `service-worker.js`
    - `.nojekyll`
    - `404.html`
-   - `404.js`
-   - `icons/giglens-icon-180.png`
-   - `icons/giglens-icon-192.png`
-   - `icons/giglens-icon-512.png`
+   - `icons/icon-192.png`
+   - `icons/icon-512.png`
 5. Open **Settings → Pages**.
 6. Choose **Deploy from a branch**.
 7. Select branch `main` and folder `/root`.
@@ -32,7 +30,7 @@ If GitHub says the deployment failed, click the red failed deployment or open th
 
 ## Netlify Drop deployment
 
-1. Download the latest GigLens release ZIP.
+1. Download the latest DriveLedger release ZIP.
 2. Unzip the file on your computer.
 3. Confirm these files are at the root of the unzipped folder:
    - `index.html`
@@ -41,19 +39,17 @@ If GitHub says the deployment failed, click the red failed deployment or open th
    - `manifest.json`
    - `service-worker.js`
    - `_redirects`
-   - `_headers`
-   - `icons/giglens-icon-180.png`
-   - `icons/giglens-icon-192.png`
-   - `icons/giglens-icon-512.png`
+   - `icons/icon-192.png`
+   - `icons/icon-512.png`
 4. Open Netlify Drop in your browser.
-5. Drag the unzipped GigLens folder into the upload area.
+5. Drag the unzipped DriveLedger folder into the upload area.
 6. Wait for Netlify to publish the site.
 7. Open the generated HTTPS URL.
 8. Add one test delivery, reload, and confirm the delivery persists.
 
 ## Why `_redirects` is included
 
-GigLens is a single-page static app. The `_redirects` file contains:
+DriveLedger is a single-page static app. The `_redirects` file contains:
 
 ```text
 /*    /index.html   200
@@ -66,13 +62,11 @@ This lets Netlify return the app shell for unknown routes while still serving re
 1. Open the Netlify HTTPS URL in Safari.
 2. Tap the Share button.
 3. Tap **Add to Home Screen**.
-4. Confirm the name **GigLens**.
-5. Launch GigLens from the Home Screen icon.
+4. Confirm the name **DriveLedger**.
+5. Launch DriveLedger from the Home Screen icon.
 6. Add a test delivery.
 7. Close and reopen the Home Screen app.
 8. Confirm the delivery persists.
-
-If an older blank/generic icon remains, remove the old Home Screen shortcut, open the updated HTTPS site in Safari, reload once, and add it again. iOS should use `icons/giglens-icon-180.png`.
 
 ## iPad install checklist
 
@@ -89,14 +83,14 @@ If an older blank/generic icon remains, remove the old Home Screen shortcut, ope
 2. Reload once to allow the service worker to cache the app shell.
 3. Add a test delivery.
 4. Turn on Airplane Mode.
-5. Reopen or reload GigLens.
+5. Reopen or reload DriveLedger.
 6. Confirm the app shell loads offline.
 7. Confirm Today, Quick Add, History, Analytics, Export, and Settings still render.
 8. Screenshot OCR may require internet if Tesseract.js has not already loaded.
 
 ## Local data persistence checklist
 
-GigLens stores data locally in browser `localStorage` under `giglens.*` keys. A v4 startup migration copies existing legacy `driveledger.*` values when the corresponding GigLens key does not exist. Netlify and GitHub Pages do not store user deliveries.
+DriveLedger stores data locally in browser `localStorage` under `driveledger.*` keys. Netlify does not store user deliveries.
 
 1. Add a test delivery.
 2. Reload the page.
@@ -115,15 +109,7 @@ Open the failed deployment log from the red deployment entry. Check these first:
 - GitHub Pages should point to branch `main`, folder `/root`.
 - The release ZIP must be unzipped before uploading.
 - `.nojekyll` should be present at the root to disable Jekyll processing.
-- Runtime files should not be inside a nested folder such as `GigLens_v3_6_3/index.html`.
-
-### GitHub security checklist
-
-- Require pull-request reviews and passing tests on the publishing branch.
-- Limit Pages deployment and repository administration to intended maintainers.
-- Require two-factor authentication; use signed commits where practical.
-- Review any change to CDN URLs, integrity hashes, `service-worker.js`, `_headers`, or GitHub workflows before merging.
-- GitHub Pages does not apply Netlify-style `_headers`; GigLens therefore also carries its core Content Security Policy in `index.html`.
+- Runtime files should not be inside a nested folder such as `DriveLedger_v3_6_3/index.html`.
 
 
 ### The app shows an old version

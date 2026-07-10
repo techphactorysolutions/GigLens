@@ -4,7 +4,7 @@ Input reviewed: `driveledger-fixed.zip`
 
 ## Finding
 
-Claude's ZIP preserved the main runtime files from GigLens v3.7.2, but the package was incomplete for engineering/release use.
+Claude's ZIP preserved the main runtime files from DriveLedger v3.7.2, but the package was incomplete for engineering/release use.
 
 The following important support/deployment files were missing from Claude's ZIP:
 

@@ -1,5 +1,11 @@
 # GigLens Audit Report
 
+## 4.0.1 Home Screen icon and screenshot OCR repair
+
+Audit reproduced two release-level problems. The uploaded GigLens HTML and manifest references expected GigLens icon files, but the supplied release set did not include those icon assets. The OCR worker configuration also pointed at `tesseract.js-core@5.1.1`; Tesseract.js v5 documents its core directory as `tesseract.js-core@v5.0.0`. The OCR flow had no bounded recovery when worker initialization or recognition stalled.
+
+Fixes: generated exact opaque icons, added root and versioned Safari/PWA icon paths, updated the service-worker cache, corrected the core dependency path, permitted WebAssembly under CSP, added progress reporting, 20-second engine initialization timeout, 45-second recognition timeout, worker termination, and clear manual-entry fallback.
+
 ## 4.0.0 rebrand, visual classifier, UI, icon, and publishing-security audit
 
 Scope: incrementally upgrade the existing static/local-first PWA without a backend, framework, build system, or destructive data rewrite.

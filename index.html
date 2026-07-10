@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net https://tessdata.projectnaptha.com; img-src 'self' data: blob:; style-src 'self'; font-src 'self' data:; manifest-src 'self'; upgrade-insecure-requests" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; child-src 'self' blob: https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net https://tessdata.projectnaptha.com; img-src 'self' data: blob:; style-src 'self'; font-src 'self' data:; manifest-src 'self'; upgrade-insecure-requests" />
   <meta name="referrer" content="no-referrer" />
   <meta name="theme-color" content="#07111f" />
   <meta name="application-name" content="GigLens" />
@@ -15,21 +15,24 @@
   <meta name="format-detection" content="telephone=no" />
   <meta name="description" content="GigLens turns gig-app screenshots into a private, local-first earnings, mileage, profit, and performance command center." />
   <title>GigLens</title>
-  <link rel="manifest" href="manifest.json" />
-  <link rel="apple-touch-icon" sizes="180x180" href="icons/giglens-icon-180.png" />
-  <link rel="apple-touch-icon-precomposed" href="icons/giglens-icon-180.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="icons/giglens-icon-192.png" />
-  <link rel="icon" type="image/png" sizes="512x512" href="icons/giglens-icon-512.png" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/giglens-icon-180-v401.png" />
+  <link rel="apple-touch-icon-precomposed" href="./icons/giglens-icon-180-v401.png" />
+  <link rel="icon" type="image/png" href="./favicon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/giglens-icon-192-v401.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="./icons/giglens-icon-512-v401.png" />
+  <link rel="icon" type="image/png" sizes="1024x1024" href="./icons/giglens-icon-1024-v401.png" />
+  <link rel="stylesheet" href="./styles.css" />
   <script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" integrity="sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F" crossorigin="anonymous"></script>
-  <script defer src="app.js"></script>
+  <script defer src="./app.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#tab-today">Skip to main content</a>
   <div class="app-shell">
     <header class="topbar">
       <div class="brand-lockup">
-        <img class="brand-mark" src="icons/giglens-icon-180.png" width="52" height="52" alt="" aria-hidden="true" />
+        <img class="brand-mark" src="./icons/giglens-icon-180.png" width="52" height="52" alt="" aria-hidden="true" />
         <div>
           <p class="eyebrow">Multi-App Driver Intelligence</p>
           <h1>GigLens</h1>
