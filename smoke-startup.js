@@ -346,10 +346,10 @@ function runMigrationSmoke() {
   if (migratedSettings.mileageDeductionRate !== 0.7 || migratedSettings.taxMileageRate !== 0.7) {
     throw new Error('settings mileage deduction alias migration failed');
   }
-  if (migratedSettings.defaultCompany !== 'DoorDash' || migratedSettings.theme !== 'system' || migratedSettings.appDataVersion !== 12) {
+  if (migratedSettings.defaultCompany !== 'DoorDash' || migratedSettings.theme !== 'system' || migratedSettings.appDataVersion !== 13) {
     throw new Error('invalid settings were not defaulted during migration');
   }
-  if (!Array.isArray(migratedShift.shiftHistory) || migratedShift.shiftHistory.length !== 1 || migratedShift.appDataVersion !== 12) {
+  if (!Array.isArray(migratedShift.shiftHistory) || migratedShift.shiftHistory.length !== 1 || migratedShift.appDataVersion !== 13) {
     throw new Error('shift history migration failed');
   }
 }
@@ -1060,10 +1060,10 @@ function runPwaOfflinePolishSmoke() {
     if (!fs.existsSync(path.join(root, icon.src))) throw new Error(`manifest icon path missing: ${icon.src}`);
     if (!String(icon.purpose || '').includes('maskable')) throw new Error('manifest icons should include maskable purpose');
   }
-  for (const asset of ['./index.html', './styles.css', './app.js', './manifest.json', './icons/giglens-icon-192-v401.png', './icons/giglens-icon-512-v401.png', './apple-touch-icon.png']) {
+  for (const asset of ['./index.html', './styles.css', './app.js', './manifest.json', './icons/giglens-icon-192-v410.png', './icons/giglens-icon-512-v410.png', './apple-touch-icon-v410.png']) {
     if (!serviceWorker.includes(`"${asset}"`)) throw new Error(`service worker should cache core app shell assets: ${asset}`);
   }
-  for (const token of ['CACHE_VERSION = "v38-giglens-icon-ocr-repair"', 'OFFLINE_FALLBACK', 'networkFirst', 'staleWhileRevalidate', 'Tesseract CDN']) {
+  for (const token of ['CACHE_VERSION = "v39-giglens-learning-ui-repair"', 'OFFLINE_FALLBACK', 'networkFirst', 'staleWhileRevalidate', 'Tesseract CDN']) {
     if (!serviceWorker.includes(token)) throw new Error(`service worker missing PWA offline token: ${token}`);
   }
   if (!html.includes('id="offlineBanner"') || !css.includes('offline-banner')) {
@@ -1365,7 +1365,7 @@ function runNetlifyReleasePackageSmoke() {
   for (const token of ['Netlify Drop deployment', 'GitHub Pages deployment', 'iPhone install checklist', 'iPad install checklist', 'Offline reload checklist', 'Local data persistence checklist', 'Troubleshooting']) {
     if (!deployment.includes(token)) throw new Error(`DEPLOYMENT.md missing ${token}`);
   }
-  for (const rel of ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '_redirects', '.nojekyll', '404.html', 'DEPLOYMENT.md', 'icons/giglens-icon-180.png', 'icons/giglens-icon-180-v401.png', 'icons/giglens-icon-192-v401.png', 'icons/giglens-icon-512-v401.png', 'icons/giglens-icon-1024-v401.png', 'apple-touch-icon.png', 'favicon.png']) {
+  for (const rel of ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '_redirects', '.nojekyll', '404.html', 'DEPLOYMENT.md', 'icons/giglens-icon-180.png', 'icons/giglens-icon-180-v410.png', 'icons/giglens-icon-192-v410.png', 'icons/giglens-icon-512-v410.png', 'icons/giglens-icon-1024-v410.png', 'apple-touch-icon-v410.png', 'favicon-v410.png', 'apple-touch-icon.png', 'favicon.png']) {
     if (!fs.existsSync(path.join(root, rel))) throw new Error(`Netlify release package missing root asset ${rel}`);
   }
   const runtimeText = ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '_redirects', '404.html']
@@ -1412,6 +1412,10 @@ async function runQuickScreenshotAddSmoke() {
   if (!ocrDelivery || !ocrDelivery.ocrText.includes('Seoul Taco') || ocrDelivery.ocrConfidence <= 0) {
     throw new Error('quick screenshot flow did not persist an OCR delivery with restaurant and OCR metadata');
   }
+  const quickLearning = JSON.parse(harness.storage.get('giglens.ocrLearning.v1') || '{}');
+  if (!Array.isArray(quickLearning.corrections) || quickLearning.corrections.length !== 1) {
+    throw new Error('quick screenshot review did not confirm its scan pattern in local learning');
+  }
 
   const offlineHarness = createHarness({}, { navigator: { onLine: false } });
   vm.runInNewContext(appCode, offlineHarness.context, { filename: 'app.js' });
@@ -1420,9 +1424,53 @@ async function runQuickScreenshotAddSmoke() {
   if (!offlineHarness.elements.get('quickScanStatus').textContent.includes('OCR library is not loaded yet')) {
     throw new Error('quick screenshot unavailable OCR should not crash and should show a clear message');
   }
-  console.log('4.0.1 GigLens repair cases passed');
+  console.log('4.1.0 GigLens scan repair cases passed');
 }
 
+
+
+async function runOCRLearningSmoke() {
+  const correctedText = 'Exclusive\nBurger King\n$9.98\n20 min (3.2 mi) total';
+  const first = createHarness({}, {
+    Tesseract: { recognize: async () => ({ data: { text: correctedText } }) }
+  });
+  vm.runInNewContext(appCode, first.context, { filename: 'app.js' });
+  await callFirst(first.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'uber-correction.png' }] } });
+  first.elements.get('ocrCompanyInput').value = 'Uber Eats';
+  first.elements.get('ocrMerchantInput').value = 'Burger King';
+  first.elements.get('ocrEarningsInput').value = '9.98';
+  first.elements.get('ocrMilesInput').value = '3.2';
+  first.elements.get('ocrMinutesInput').value = '20';
+  await callFirst(first.elements.get('saveOcrBtn'), 'click', {});
+  const savedLearning = JSON.parse(first.storage.get('giglens.ocrLearning.v1') || '{}');
+  if (!Array.isArray(savedLearning.corrections) || savedLearning.corrections.length !== 1) {
+    throw new Error('reviewed OCR correction was not saved to local scanner learning');
+  }
+  if (!savedLearning.corrections[0].changedFields.includes('platform')) {
+    throw new Error('scanner learning did not record the corrected platform field');
+  }
+
+  const similarText = 'Exclusive\nBurger King\n$12.45\n24 min (4.1 mi) total';
+  const second = createHarness({
+    'giglens.ocrLearning.v1': JSON.stringify(savedLearning)
+  }, {
+    Tesseract: { recognize: async () => ({ data: { text: similarText } }) }
+  });
+  vm.runInNewContext(appCode, second.context, { filename: 'app.js' });
+  await callFirst(second.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'uber-similar.png' }] } });
+  if (second.elements.get('ocrCompanyInput').value !== 'Uber Eats') {
+    throw new Error(`local scanner learning did not apply the corrected platform to a similar screenshot: ${second.elements.get('ocrCompanyInput').value}`);
+  }
+  if (!second.elements.get('ocrLearningHint').textContent.includes('Local learning helped')) {
+    throw new Error('OCR review did not explain when local learning improved a scan');
+  }
+  callFirst(second.elements.get('resetOcrLearningBtn'), 'click', {});
+  const resetLearning = JSON.parse(second.storage.get('giglens.ocrLearning.v1') || '{}');
+  if (!Array.isArray(resetLearning.corrections) || resetLearning.corrections.length !== 0) {
+    throw new Error('Reset scanner learning did not clear local correction memory');
+  }
+  console.log('local OCR correction learning cases passed');
+}
 
 function runFixedOverlayPositionSmoke() {
   const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
@@ -1448,7 +1496,7 @@ function runPublicSecretScanSmoke() {
     /xox[baprs]-[A-Za-z0-9\-]{20,}/,
     /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
   ];
-  for (const rel of ['index.html', 'app.js', 'styles.css', 'manifest.json', 'service-worker.js', '404.html', 'package.json', 'README.md', 'AUDIT_REPORT.md', 'CHANGELOG.md', 'DEPLOYMENT.md', 'SECURITY_AUDIT.md', 'CLAUDE_REVIEW_AUDIT.md']) {
+  for (const rel of ['index.html', 'app.js', 'styles.css', 'manifest.json', 'service-worker.js', '404.html', 'package.json', 'README.md', 'AUDIT_REPORT.md', 'CHANGELOG.md', 'DEPLOYMENT.md', 'SECURITY_AUDIT.md', 'CLAUDE_REVIEW_AUDIT.md', 'OCR_LEARNING_AUDIT.md']) {
     const text = fs.readFileSync(path.join(root, rel), 'utf8');
     for (const pattern of patterns) {
       if (pattern.test(text)) throw new Error(`possible exposed secret in ${rel}`);
@@ -1473,6 +1521,7 @@ async function main() {
   await runDecisionAssistantSmoke();
   await runOCRReviewSmoke();
   await runQuickScreenshotAddSmoke();
+  await runOCRLearningSmoke();
   await runDriverRecapSmoke();
   runMobilePolishSmoke();
   runPwaOfflinePolishSmoke();

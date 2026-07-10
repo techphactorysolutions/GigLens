@@ -1,3 +1,9 @@
+## 4.1.0 — Local scanner learning and mobile layout repair
+
+GigLens now learns from reviewed screenshot corrections locally on the device. When a scan is wrong, correct the Company, Restaurant/Store, earnings, miles, or minutes and save it. GigLens stores a compact correction profile—not the screenshot image—and uses exact matches, similar app-workflow text, merchant aliases, and numeric context to improve later scans. Scanner learning can be reviewed and reset under **Settings → Privacy and data controls** and is included in JSON backups.
+
+The in-app logo is now embedded directly in the page, eliminating the broken-image state shown by stale or incomplete icon deployments. The mobile layout also removes the duplicate floating Scan Add bar, reduces the header/hero footprint, and changes the bottom navigation to five primary destinations while Manual Entry remains under More tools.
+
 # GigLens
 
 GigLens is a private, local-first command center for drivers who run several gig apps at once. Its fastest workflow is: take an offer or completed-delivery screenshot, scan it, review the detected app/merchant/pay/miles/time, and save it while the day is still moving. Saved deliveries then power earnings, estimated profit, mileage deduction, hourly pace, platform, zone, shift, and accept/decline analytics.

@@ -35,3 +35,7 @@ Before a broader public release, consider:
 2. Adding Subresource Integrity if continuing to use a CDN.
 3. Adding a Content Security Policy.
 4. Keeping all future private service credentials on a backend only, never in the frontend.
+
+## 4.1 local OCR learning privacy note
+
+The correction-learning store contains normalized field corrections, a one-way OCR text signature, and a limited set of workflow tokens. It does not store uploaded image files or screenshot pixels. The store remains in browser `localStorage`, is included in user-initiated JSON backups, and can be reset independently in Settings.

@@ -1,3 +1,21 @@
+## 4.1.0 OCR learning, embedded icon, and mobile layout audit
+
+User testing showed three concrete defects: the in-app brand icon rendered as a broken image, the screenshot correction process did not improve future recognition, and the mobile Today screen was cramped by duplicate fixed actions and six bottom tabs.
+
+### Repairs
+
+- Replaced the header `<img>` with an inline SVG representation of the GigLens lens/route mark. The installed PWA still includes opaque PNG Apple/manifest icons, but the visible in-app mark no longer depends on a separate network path.
+- Added cache-busted v4.1 icon assets and service-worker references.
+- Added `giglens.ocrLearning.v1`, capped at 120 normalized local correction records.
+- Learning records store a hashed OCR text signature, stable workflow tokens, original/corrected fields, safe numeric-context hints, and confirmation counts. Screenshot image data is not stored.
+- Exact OCR matches reuse all reviewed fields. Similar workflow matches can improve platform selection, learned merchant aliases normalize future names, and numeric-context hints influence candidate ranking.
+- Learning is included in export, validated import, merge/replace, rollback, emergency restore, storage usage, reset, and clear-all flows.
+- Removed the redundant mobile Scan Add dock, hid the duplicate Add navigation item on small screens, reduced header/hero height, and restored unobstructed scrolling above the five-item bottom bar.
+
+### Verification
+
+The executable browser-mock suite covers correction capture, similar-screenshot reuse, learning status, and reset. Static tests cover the embedded logo, storage key, learning functions, mobile dock removal, five-item navigation, icon files, PWA metadata, and existing feature wiring.
+
 # GigLens Audit Report
 
 ## 4.0.1 Home Screen icon and screenshot OCR repair

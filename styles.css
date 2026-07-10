@@ -1282,3 +1282,212 @@ select:focus {
   .tab-btn { font-size:9px; padding:0 1px; }
   .decision-log-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); }
 }
+
+/* GigLens 4.1.0 — embedded brand mark, local OCR learning, and mobile clarity */
+.brand-mark-inline {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #081728;
+}
+.brand-mark-inline svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.learning-hint {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(53, 220, 232, .16);
+  border-radius: 14px;
+  background: rgba(53, 220, 232, .055);
+  color: #a9bed3;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.ocr-learning-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 14px;
+  padding: 14px;
+  border: 1px solid rgba(55, 183, 255, .15);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(55,183,255,.075), rgba(45,245,138,.035));
+}
+.ocr-learning-card > div { display: grid; gap: 4px; min-width: 0; }
+.ocr-learning-card strong { color: var(--text); }
+.ocr-learning-card span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.ocr-learning-card .eyebrow { padding: 0; border: 0; background: transparent; }
+.ocr-learning-card .eyebrow::before { display: none; }
+
+@media (max-width: 620px) {
+  .app-shell {
+    padding: 10px 12px calc(92px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 35;
+    margin: -10px -12px 12px;
+    padding: max(10px, env(safe-area-inset-top, 0px)) 12px 10px;
+    min-height: 74px;
+    border: 0;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+    border-radius: 0;
+    background: linear-gradient(180deg, rgba(7,17,31,.98), rgba(7,17,31,.90));
+    box-shadow: 0 10px 28px rgba(0,0,0,.20);
+  }
+  .topbar::before { opacity: .45; }
+  .brand-lockup { gap: 9px; min-width: 0; flex: 1; }
+  .brand-mark { width: 43px; height: 43px; border-radius: 13px; }
+  .brand-lockup > div { gap: 1px; }
+  .brand-lockup .eyebrow {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 8.5px;
+    letter-spacing: .11em;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .brand-lockup .eyebrow::before { width: 5px; height: 5px; box-shadow: none; }
+  .brand-lockup h1 {
+    font-size: 27px;
+    line-height: 1.02;
+    letter-spacing: -.045em;
+  }
+  .maker-line {
+    margin-top: 2px;
+    max-width: none;
+    font-size: 9px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .topbar #shiftBtn {
+    flex: 0 0 auto;
+    min-height: 44px;
+    max-width: 88px;
+    padding: 0 13px;
+    border-radius: 15px;
+    font-size: 13px;
+    line-height: 1.05;
+  }
+
+  .hero-card {
+    padding: 18px;
+    margin-bottom: 12px;
+    border-radius: 25px;
+  }
+  .hero-card::after { width: 190px; height: 190px; top: -92px; right: -72px; }
+  .hero-row { align-items: flex-start; }
+  .money { font-size: clamp(50px, 16vw, 62px); margin-top: 5px; }
+  .subline { margin-top: 6px; font-size: 16px; }
+  .goal-pill { padding: 9px 12px; }
+  .progress-wrap { margin: 17px 0 10px; height: 11px; }
+  .goal-line { align-items: center; font-size: 14px; }
+  .hero-shift-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-top: 13px;
+  }
+  .hero-shift-row > .status-chip { justify-self: start; }
+  .hero-shift-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    gap: 9px;
+  }
+  .hero-shift-actions > button {
+    min-height: 48px;
+    width: 100%;
+    border-radius: 16px;
+  }
+  .insight { margin-top: 13px; font-size: 15px; }
+
+  .quick-actions.big-actions { gap: 10px; margin-bottom: 10px; }
+  .quick-actions.big-actions .scan-cta {
+    min-height: 74px;
+    padding: 14px 18px;
+    border-radius: 22px;
+  }
+  .scan-cta span { font-size: 18px; }
+  .scan-cta small { font-size: 12px; }
+  .tool-disclosure,
+  .luxury-disclosure { border-radius: 19px; }
+  .tool-disclosure summary,
+  .luxury-disclosure > summary { min-height: 52px; padding: 13px 15px; }
+  .today-insights-drawer { margin-top: 9px; }
+
+  /* The large floating Scan Add bar duplicated the primary CTA and covered content. */
+  .mobile-action-dock { display: none !important; }
+
+  .bottom-tabs {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    width: calc(100% - 20px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    bottom: 7px;
+    padding: 6px;
+    padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+    border-radius: 21px;
+  }
+  .bottom-tabs .tab-btn[data-tab="add"] { display: none; }
+  .tab-btn {
+    min-height: 48px;
+    padding: 0 3px;
+    border-radius: 15px;
+    font-size: 10.5px;
+    letter-spacing: -.01em;
+  }
+  .toast { bottom: calc(78px + env(safe-area-inset-bottom, 0px)); }
+  .app-credit { margin: 14px 0 82px; }
+
+  .ocr-learning-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .ocr-learning-card .secondary-btn { width: 100%; }
+
+  .sheet-panel { max-height: 91vh; border-radius: 26px 26px 0 0; }
+  .quick-scan-card { padding: 10px; border-radius: 18px; }
+  .quick-file-drop { min-height: 104px; }
+}
+
+@media (max-width: 390px) {
+  .brand-lockup .eyebrow { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+  .maker-line { max-width: 176px; overflow: hidden; text-overflow: ellipsis; }
+  .topbar #shiftBtn { max-width: 78px; padding: 0 10px; font-size: 12px; }
+  .goal-line { font-size: 13px; }
+  .tab-btn { font-size: 9.8px; padding: 0 1px; }
+}
+
+/* Keep the brand lockup horizontal; this must outrank the generic topbar child grid rule. */
+.topbar > .brand-lockup { display: flex; }
+
+@media (max-width: 620px) {
+  .sticky-sheet-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 8;
+    grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr) !important;
+    gap: 8px;
+    margin: 12px -2px -2px;
+    padding: 10px 2px max(4px, env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(180deg, rgba(9,18,32,0), rgba(9,18,32,.96) 28%, rgba(9,18,32,.99));
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+  }
+  .sticky-sheet-actions .full {
+    min-height: 50px;
+    margin: 0;
+    padding: 0 10px;
+    font-size: 13px;
+    border-radius: 16px;
+  }
+}

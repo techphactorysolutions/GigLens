@@ -1,8 +1,8 @@
 {
   "name": "giglens-pwa",
-  "version": "4.0.1",
+  "version": "4.1.0",
   "private": true,
-  "description": "GigLens repaired PWA release with functional iPhone Home Screen icons, bounded screenshot OCR, screenshot-first entry, local-first analytics, backups, and decision tracking.",
+  "description": "GigLens with embedded in-app branding, local OCR correction learning, repaired screenshot scanning, simplified mobile UI, local-first analytics, backups, and decision tracking.",
   "scripts": {
     "test": "python -m unittest discover -s tests",
     "syntax": "node --check app.js && node --check service-worker.js && node --check 404.js",

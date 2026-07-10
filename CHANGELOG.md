@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.1.0 — OCR correction learning and mobile UI repair
+
+- Replaced the in-app header image dependency with an embedded GigLens SVG mark so the brand icon cannot render as a broken image when a stale cache or incomplete deployment misses the PNG path.
+- Added cache-busted v4.1 icon filenames for Apple Touch Icon, manifest icons, favicon, and service-worker assets.
+- Added local OCR correction learning under `giglens.ocrLearning.v1`. Corrected platform, merchant, earnings, miles, and minutes are remembered on this device without storing the screenshot image.
+- Added exact-screenshot correction recall, similar-workflow platform learning, merchant alias correction, and learned numeric-context boosts.
+- Added scanner-learning status, reset control, backup/import/rollback coverage, and local privacy messaging.
+- Simplified the iPhone layout by removing the redundant floating Scan Add dock, reducing header and hero height, hiding the duplicate Add tab on mobile, and using a five-item bottom navigation.
+- Bumped data schema to `13`, backup schema to `14`, package to `4.1.0`, and cache to `giglens-v39-giglens-learning-ui-repair`.
+
 ## 4.0.1 — Home Screen icon and OCR recovery repair
 
 - Rebuilt the missing GigLens icon set as opaque, exact-size PNG files and added cache-busting 180/192/512/1024 filenames.

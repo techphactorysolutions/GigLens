@@ -1,5 +1,5 @@
-const CACHE_VERSION = "v38-giglens-icon-ocr-repair";
-const CACHE_NAME = "giglens-v38-giglens-icon-ocr-repair";
+const CACHE_VERSION = "v39-giglens-learning-ui-repair";
+const CACHE_NAME = "giglens-v39-giglens-learning-ui-repair";
 const OFFLINE_FALLBACK = "./index.html";
 const CORE_ASSETS = [
   "./",
@@ -8,11 +8,12 @@ const CORE_ASSETS = [
   "./app.js",
   "./manifest.json",
   "./icons/giglens-icon-180.png",
-  "./icons/giglens-icon-180-v401.png",
-  "./icons/giglens-icon-192-v401.png",
-  "./icons/giglens-icon-512-v401.png",
-  "./icons/giglens-icon-1024-v401.png",
-  "./apple-touch-icon.png",
+  "./icons/giglens-icon-180-v410.png",
+  "./icons/giglens-icon-192-v410.png",
+  "./icons/giglens-icon-512-v410.png",
+  "./icons/giglens-icon-1024-v410.png",
+  "./apple-touch-icon-v410.png",
+  "./favicon-v410.png",
   "./favicon.png",
   "./404.js"
 ];

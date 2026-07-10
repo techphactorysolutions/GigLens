@@ -5,6 +5,7 @@
   const SHIFT_KEY = "giglens.shift.v1";
   const ROLLBACK_KEY = "giglens.rollback.v1";
   const LAST_BACKUP_KEY = "giglens.lastBackup.v1";
+  const OCR_LEARNING_KEY = "giglens.ocrLearning.v1";
   const LEGACY_KEYS = {
     [STORE_KEY]: "driveledger.deliveries.v1",
     [DECISIONS_KEY]: "driveledger.decisions.v1",
@@ -13,8 +14,10 @@
     [ROLLBACK_KEY]: "driveledger.rollback.v1",
     [LAST_BACKUP_KEY]: "driveledger.lastBackup.v1"
   };
-  const DATA_VERSION = 12;
-  const BACKUP_VERSION = 13;
+  const DATA_VERSION = 13;
+  const BACKUP_VERSION = 14;
+  const OCR_LEARNING_VERSION = 1;
+  const OCR_LEARNING_LIMIT = 120;
   const OCR_INIT_TIMEOUT_MS = 20000;
   const OCR_RECOGNIZE_TIMEOUT_MS = 45000;
 
@@ -48,6 +51,14 @@
   ]);
 
   const validSources = new Set(["manual", "ocr", "calculator", "import"]);
+  const OCR_LEARNING_TOKEN_ALLOWLIST = new Set([
+    "doordash", "dasher", "dash", "uber", "eats", "trip", "radar", "exclusive", "grubhub", "diner",
+    "instacart", "shopper", "batch", "spark", "walmart", "roadie", "gig", "amazon", "flex", "block",
+    "catering", "ezcater", "offer", "accept", "decline", "guaranteed", "deliver", "delivery", "pickup",
+    "dropoff", "customer", "total", "estimated", "miles", "mile", "minutes", "minute", "mins", "min",
+    "pay", "payout", "earnings", "restaurant", "store", "merchant", "items", "route", "curbside", "round",
+    "robin", "red", "card", "peak", "request", "supplement", "partner", "shop", "replacement", "same", "day"
+  ]);
   const weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
   const defaultSettings = {
@@ -71,6 +82,7 @@
   let decisions = normalizeDecisions(readJSON(DECISIONS_KEY, []));
   let settings = normalizeSettings(readJSON(SETTINGS_KEY, {}));
   let shift = normalizeShift(readJSON(SHIFT_KEY, { active: false, startedAt: null, endedAt: null }));
+  let ocrLearning = normalizeOCRLearning(readJSON(OCR_LEARNING_KEY, null));
   let lastOCRText = "";
   let lastOCRParsed = null;
   let quickOCRText = "";
@@ -195,6 +207,7 @@
     quickPreviewImage: $("quickPreviewImage"),
     quickOcrDetails: $("quickOcrDetails"),
     quickOcrText: $("quickOcrText"),
+    quickLearningHint: $("quickLearningHint"),
     quickClearScanBtn: $("quickClearScanBtn"),
     quickManualDetails: $("quickManualDetails"),
     quickCompanyInput: $("quickCompanyInput"),
@@ -236,6 +249,7 @@
     clearOcrBtn: $("clearOcrBtn"),
     ocrDetails: $("ocrDetails"),
     ocrText: $("ocrText"),
+    ocrLearningHint: $("ocrLearningHint"),
     offerPayInput: $("offerPayInput"),
     offerMilesInput: $("offerMilesInput"),
     offerMinutesInput: $("offerMinutesInput"),
@@ -275,6 +289,8 @@
     storageUsageDetails: $("storageUsageDetails"),
     privacyExportAllBtn: $("privacyExportAllBtn"),
     privacyRestoreSafetyBtn: $("privacyRestoreSafetyBtn"),
+    ocrLearningStatus: $("ocrLearningStatus"),
+    resetOcrLearningBtn: $("resetOcrLearningBtn"),
     resetSettingsBtn: $("resetSettingsBtn"),
     resetDeliveriesBtn: $("resetDeliveriesBtn"),
     clearAllDataBtn: $("clearAllDataBtn"),
@@ -307,6 +323,275 @@
     writeJSON(DECISIONS_KEY, decisions);
     writeJSON(SETTINGS_KEY, settings);
     writeJSON(SHIFT_KEY, shift);
+    writeJSON(OCR_LEARNING_KEY, ocrLearning);
+  }
+
+  function normalizeComparableText(value) {
+    return String(value || "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function ocrTextSignature(text) {
+    const normalized = normalizeComparableText(text);
+    let hash = 2166136261;
+    for (let i = 0; i < normalized.length; i += 1) {
+      hash ^= normalized.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  function learningFingerprintTokens(text) {
+    const tokens = normalizeComparableText(text).split(" ").filter(Boolean);
+    return [...new Set(tokens.filter((token) => OCR_LEARNING_TOKEN_ALLOWLIST.has(token)))].sort().slice(0, 48);
+  }
+
+  function sharedTokenCount(left, right) {
+    const b = new Set(right || []);
+    return (left || []).reduce((count, token) => count + (b.has(token) ? 1 : 0), 0);
+  }
+
+  function tokenSimilarity(left, right) {
+    const a = new Set(left || []);
+    const b = new Set(right || []);
+    if (!a.size || !b.size) return 0;
+    let shared = 0;
+    a.forEach((token) => { if (b.has(token)) shared += 1; });
+    return shared / (a.size + b.size - shared);
+  }
+
+  function normalizeCorrectionSide(value = {}) {
+    const platform = allowedCompanies.has(value.platform || value.company) ? (value.platform || value.company) : "Other";
+    return {
+      platform,
+      merchant: cleanText(value.merchant || value.restaurant || "", 120),
+      merchantType: ["restaurant", "store", "merchant"].includes(value.merchantType) ? value.merchantType : "merchant",
+      earnings: bounded(value.earnings, 0, 10000, 0, 2),
+      miles: bounded(value.miles, 0, 1000, 0, 1),
+      minutes: bounded(value.minutes, 0, 600, 0, 0)
+    };
+  }
+
+  function normalizeOCRLearning(value) {
+    const rawCorrections = Array.isArray(value?.corrections) ? value.corrections : [];
+    const corrections = rawCorrections.map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const fingerprint = Array.isArray(item.fingerprint)
+        ? [...new Set(item.fingerprint.map((token) => normalizeComparableText(token)).filter(Boolean))].slice(0, 48)
+        : [];
+      const numericHints = {};
+      for (const kind of ["earnings", "miles", "minutes"]) {
+        numericHints[kind] = Array.isArray(item.numericHints?.[kind])
+          ? [...new Set(item.numericHints[kind].map((token) => normalizeComparableText(token)).filter(Boolean))].slice(0, 20)
+          : [];
+      }
+      return {
+        id: cleanText(item.id || `learn-${Math.random().toString(36).slice(2)}`, 80),
+        createdAt: Number.isNaN(new Date(item.createdAt).getTime()) ? new Date().toISOString() : new Date(item.createdAt).toISOString(),
+        source: item.source === "quick" ? "quick" : "review",
+        signature: cleanText(item.signature || "", 32),
+        fingerprint,
+        original: normalizeCorrectionSide(item.original),
+        corrected: normalizeCorrectionSide(item.corrected),
+        changedFields: Array.isArray(item.changedFields) ? item.changedFields.filter((field) => ["platform", "merchant", "earnings", "miles", "minutes"].includes(field)) : [],
+        numericHints,
+        confirmations: Math.max(1, Math.min(25, Math.round(num(item.confirmations) || 1)))
+      };
+    }).filter(Boolean).slice(-OCR_LEARNING_LIMIT);
+    return { version: OCR_LEARNING_VERSION, corrections };
+  }
+
+  function buildNumericLearningHint(text, value, kind) {
+    if (!Number.isFinite(Number(value)) || Number(value) <= 0) return [];
+    const source = String(text || "");
+    const variants = kind === "earnings"
+      ? [Number(value).toFixed(2), Number(value).toFixed(2).replace(".", ",")]
+      : kind === "miles"
+        ? [String(round1(value)), Number(value).toFixed(1)]
+        : [String(Math.round(value))];
+    let index = -1;
+    for (const variant of variants) {
+      index = source.toLowerCase().indexOf(variant.toLowerCase());
+      if (index >= 0) break;
+    }
+    if (index < 0) return [];
+    const context = source.slice(Math.max(0, index - 90), Math.min(source.length, index + 110));
+    return learningFingerprintTokens(context);
+  }
+
+  function learnedNumericContextBoost(kind, context) {
+    const current = learningFingerprintTokens(context);
+    if (!current.length) return 0;
+    let best = 0;
+    for (const correction of ocrLearning.corrections.slice(-80)) {
+      const hint = correction.numericHints?.[kind] || [];
+      if (!hint.length) continue;
+      const similarity = tokenSimilarity(current, hint);
+      if (similarity >= 0.3) best = Math.max(best, similarity * 4.5);
+    }
+    return best;
+  }
+
+  function correctionChangedFields(original, corrected) {
+    const fields = [];
+    if (original.platform !== corrected.platform) fields.push("platform");
+    if (normalizeComparableText(original.merchant) !== normalizeComparableText(corrected.merchant)) fields.push("merchant");
+    if (Math.abs(original.earnings - corrected.earnings) >= 0.01) fields.push("earnings");
+    if (Math.abs(original.miles - corrected.miles) >= 0.05) fields.push("miles");
+    if (Math.abs(original.minutes - corrected.minutes) >= 1) fields.push("minutes");
+    return fields;
+  }
+
+  function recordOCRCorrection(parsed, reviewed, rawText, source = "review") {
+    if (!parsed || !reviewed || !String(rawText || "").trim()) return { saved: false, changedFields: [] };
+    const original = normalizeCorrectionSide({
+      platform: parsed.platform || "Other",
+      merchant: parsed.merchant,
+      merchantType: parsed.merchantType,
+      earnings: parsed.earnings,
+      miles: parsed.miles,
+      minutes: parsed.minutes
+    });
+    const corrected = normalizeCorrectionSide({
+      platform: reviewed.company || reviewed.platform,
+      merchant: reviewed.merchant,
+      merchantType: reviewed.merchantType || inferMerchantType(reviewed.merchant, rawText),
+      earnings: reviewed.earnings,
+      miles: reviewed.miles,
+      minutes: reviewed.minutes
+    });
+    const signature = ocrTextSignature(rawText);
+    const changedFields = correctionChangedFields(original, corrected);
+    const previousIndex = ocrLearning.corrections.findIndex((item) => item.signature === signature);
+    const previous = previousIndex >= 0 ? ocrLearning.corrections[previousIndex] : null;
+    const correction = {
+      id: previous?.id || makeId(),
+      createdAt: new Date().toISOString(),
+      source: source === "quick" ? "quick" : "review",
+      signature,
+      fingerprint: learningFingerprintTokens(rawText),
+      original,
+      corrected,
+      changedFields,
+      numericHints: {
+        earnings: buildNumericLearningHint(rawText, corrected.earnings, "earnings"),
+        miles: buildNumericLearningHint(rawText, corrected.miles, "miles"),
+        minutes: buildNumericLearningHint(rawText, corrected.minutes, "minutes")
+      },
+      confirmations: Math.min(25, (previous?.confirmations || 0) + 1)
+    };
+    if (previousIndex >= 0) ocrLearning.corrections.splice(previousIndex, 1);
+    ocrLearning.corrections.push(correction);
+    ocrLearning.corrections = ocrLearning.corrections.slice(-OCR_LEARNING_LIMIT);
+    writeJSON(OCR_LEARNING_KEY, ocrLearning);
+    renderOCRLearningStatus();
+    return { saved: true, changedFields };
+  }
+
+  function applyOCRLearning(parsed, rawText) {
+    const result = { ...parsed, learningApplied: [] };
+    const signature = ocrTextSignature(rawText);
+    const fingerprint = learningFingerprintTokens(rawText);
+    const exact = [...ocrLearning.corrections].reverse().find((item) => item.signature === signature);
+    if (exact) {
+      result.platform = exact.corrected.platform === "Other" ? "" : exact.corrected.platform;
+      result.merchant = exact.corrected.merchant || result.merchant;
+      result.restaurant = result.merchant;
+      result.merchantType = exact.corrected.merchantType || result.merchantType;
+      if (exact.corrected.earnings > 0) result.earnings = exact.corrected.earnings;
+      if (exact.corrected.miles >= 0) result.miles = exact.corrected.miles;
+      if (exact.corrected.minutes >= 0) result.minutes = exact.corrected.minutes;
+      result.platformConfidence = Math.max(result.platformConfidence || 0, 96);
+      result.confidence = Math.max(result.confidence || 0, 94);
+      result.learningApplied.push("exact correction");
+      return result;
+    }
+
+    const votes = new Map();
+    for (const correction of ocrLearning.corrections.slice(-80)) {
+      const similarity = tokenSimilarity(fingerprint, correction.fingerprint);
+      const shared = sharedTokenCount(fingerprint, correction.fingerprint);
+      if (similarity < 0.42 || shared < 2) continue;
+      const platform = correction.corrected.platform;
+      if (!platform || platform === "Other") continue;
+      const correctedPlatformBefore = correction.changedFields.includes("platform");
+      const weight = similarity * (1 + Math.min(correction.confirmations, 5) * 0.12) + (correctedPlatformBefore ? 0.35 : 0);
+      const current = votes.get(platform) || { score: 0, supporters: 0, bestSimilarity: 0, correctedPlatformBefore: false };
+      current.score += weight;
+      current.supporters += 1;
+      current.bestSimilarity = Math.max(current.bestSimilarity, similarity);
+      current.correctedPlatformBefore ||= correctedPlatformBefore;
+      votes.set(platform, current);
+    }
+    const ranked = [...votes.entries()].sort((a, b) => b[1].score - a[1].score);
+    if (ranked.length) {
+      const [learnedPlatform, learnedVote] = ranked[0];
+      const runnerScore = ranked[1]?.[1]?.score || 0;
+      const currentWeak = !result.platform || (result.platformConfidence || 0) < 72;
+      const strongCorrection = learnedVote.correctedPlatformBefore && learnedVote.bestSimilarity >= 0.72;
+      const consensus = learnedVote.supporters >= 2 && learnedVote.score - runnerScore >= 0.3;
+      if (learnedPlatform !== result.platform && (currentWeak || strongCorrection || consensus)) {
+        result.platform = learnedPlatform;
+        result.platformConfidence = Math.max(result.platformConfidence || 0, Math.round(72 + learnedVote.bestSimilarity * 24));
+        result.learningApplied.push("learned platform pattern");
+      }
+    }
+
+    const rawComparable = normalizeComparableText(rawText);
+    for (const correction of [...ocrLearning.corrections].reverse()) {
+      const originalMerchant = normalizeComparableText(correction.original.merchant);
+      const correctedMerchant = correction.corrected.merchant;
+      const correctedComparable = normalizeComparableText(correctedMerchant);
+      if (!correctedMerchant) continue;
+      const currentMerchant = normalizeComparableText(result.merchant);
+      const aliasMatch = originalMerchant && currentMerchant === originalMerchant;
+      const textMatch = correctedComparable.length >= 4 && rawComparable.includes(correctedComparable);
+      if (aliasMatch || textMatch) {
+        if (result.merchant !== correctedMerchant) result.learningApplied.push("learned merchant name");
+        result.merchant = correctedMerchant;
+        result.restaurant = correctedMerchant;
+        result.merchantType = correction.corrected.merchantType || result.merchantType;
+        break;
+      }
+    }
+
+    if (result.learningApplied.length) result.confidence = Math.min(98, Math.max(result.confidence || 0, 82));
+    return result;
+  }
+
+  function mergeOCRLearning(currentValue, importedValue) {
+    const current = normalizeOCRLearning(currentValue);
+    const imported = normalizeOCRLearning(importedValue);
+    const bySignature = new Map();
+    [...current.corrections, ...imported.corrections].forEach((item) => {
+      const key = item.signature || item.id;
+      const previous = bySignature.get(key);
+      if (!previous || new Date(item.createdAt) >= new Date(previous.createdAt)) bySignature.set(key, item);
+    });
+    return normalizeOCRLearning({ version: OCR_LEARNING_VERSION, corrections: [...bySignature.values()].slice(-OCR_LEARNING_LIMIT) });
+  }
+
+  function renderOCRLearningStatus() {
+    const count = ocrLearning.corrections.length;
+    if (els.ocrLearningStatus) {
+      els.ocrLearningStatus.textContent = count
+        ? `${count} local correction${count === 1 ? "" : "s"} available to improve future scans.`
+        : "No corrections learned yet.";
+    }
+  }
+
+  function resetOCRLearning() {
+    if (!ocrLearning.corrections.length) return toast("Scanner learning is already empty.");
+    if (!confirm("Reset all locally learned screenshot corrections? Saved deliveries will not be affected.")) return;
+    ocrLearning = normalizeOCRLearning(null);
+    writeJSON(OCR_LEARNING_KEY, ocrLearning);
+    renderOCRLearningStatus();
+    toast("Scanner learning reset. Saved deliveries were kept.");
   }
 
   function normalizeDeliveries(value) {
@@ -837,6 +1122,7 @@
     renderHistory();
     renderSettings();
     renderPrivacyCenter();
+    renderOCRLearningStatus();
     renderZoneControls();
     renderSmartGoal();
     renderShiftButton();
@@ -1980,13 +2266,13 @@
   }
 
   function driveLedgerStorageKeys() {
-    const known = [STORE_KEY, SETTINGS_KEY, SHIFT_KEY, ROLLBACK_KEY, LAST_BACKUP_KEY];
+    const known = [STORE_KEY, DECISIONS_KEY, SETTINGS_KEY, SHIFT_KEY, ROLLBACK_KEY, LAST_BACKUP_KEY, OCR_LEARNING_KEY];
     const found = new Set(known);
     try {
       if (typeof localStorage.length === "number" && typeof localStorage.key === "function") {
         for (let i = 0; i < localStorage.length; i += 1) {
           const key = localStorage.key(i);
-          if (key && key.startsWith("driveledger.")) found.add(key);
+          if (key && (key.startsWith("giglens.") || key.startsWith("driveledger."))) found.add(key);
         }
       }
     } catch {
@@ -2417,6 +2703,12 @@
     els.quickMilesInput.value = parsed.miles ? parsed.miles.toFixed(1) : "";
     els.quickMinutesInput.value = parsed.minutes ? String(parsed.minutes) : "";
     if (els.quickManualDetails) els.quickManualDetails.open = true;
+    if (els.quickLearningHint) {
+      const learned = Array.isArray(parsed.learningApplied) && parsed.learningApplied.length;
+      els.quickLearningHint.textContent = learned
+        ? `Local learning helped this scan: ${parsed.learningApplied.join(", ")}. Review before saving.`
+        : "Correct any field before saving. GigLens remembers the correction locally for similar future screenshots.";
+    }
     renderQuickAddPreview();
   }
 
@@ -2430,6 +2722,7 @@
     if (els.quickOcrDetails) els.quickOcrDetails.classList.add("hidden");
     if (els.quickOcrText) els.quickOcrText.textContent = "";
     if (els.quickClearScanBtn) els.quickClearScanBtn.classList.add("hidden");
+    if (els.quickLearningHint) els.quickLearningHint.textContent = "Correct any field before saving. GigLens remembers the correction locally for similar future screenshots.";
     if (clearFile && els.quickScreenshotInput) els.quickScreenshotInput.value = "";
     if (clearFile && els.quickPreviewImage) {
       if (els.quickPreviewImage.dataset.url) {
@@ -2560,6 +2853,9 @@
       toast("Could not save this delivery. Check the quick-add fields.");
       return;
     }
+    if (quickOCRText && quickOCRParsed) {
+      recordOCRCorrection(quickOCRParsed, { company, earnings, miles, minutes, merchant: delivery.merchant, merchantType: delivery.merchantType }, quickOCRText, "quick");
+    }
     deliveries.push(delivery);
     writeJSON(STORE_KEY, deliveries);
     render();
@@ -2654,6 +2950,12 @@
     els.ocrEarningsInput.value = parsed.earnings ? parsed.earnings.toFixed(2) : "";
     els.ocrMilesInput.value = parsed.miles ? parsed.miles.toFixed(1) : "";
     els.ocrMinutesInput.value = parsed.minutes ? String(parsed.minutes) : "";
+    if (els.ocrLearningHint) {
+      const learned = Array.isArray(parsed.learningApplied) && parsed.learningApplied.length;
+      els.ocrLearningHint.textContent = learned
+        ? `Local learning helped this scan: ${parsed.learningApplied.join(", ")}. Your edits will refine it again.`
+        : "Corrections improve future scans on this device. Screenshots are never stored in the learning profile.";
+    }
     renderOCRSavePreview();
     els.ocrReview.classList.remove("hidden");
   }
@@ -2688,8 +2990,9 @@
     els.milesInput.value = reviewed.miles.toFixed(1);
     els.minutesInput.value = reviewed.minutes ? String(reviewed.minutes) : "";
     if (els.merchantInput) els.merchantInput.value = reviewed.merchant || "";
+    recordOCRCorrection(parsed, { ...reviewed, merchantType: inferMerchantType(reviewed.merchant, lastOCRText) }, lastOCRText, "review");
     renderDeliveryPreview();
-    toast("Reviewed OCR fields moved into the manual form.");
+    toast("Reviewed OCR fields moved into the manual form. Corrections were learned locally.");
   }
 
   function readOCRReviewFields() {
@@ -2739,12 +3042,13 @@
       version: DATA_VERSION
     });
     if (!delivery) return toast("Could not save the reviewed OCR delivery.");
+    const learned = recordOCRCorrection(lastOCRParsed, { ...reviewed, merchantType: delivery.merchantType }, lastOCRText, "review");
     deliveries.push(delivery);
     writeJSON(STORE_KEY, deliveries);
     clearForm(false);
     render();
     showTab("today");
-    toast(`Saved reviewed OCR delivery: ${money.format(delivery.earnings)} from ${delivery.company}.`);
+    toast(`Saved reviewed OCR delivery: ${money.format(delivery.earnings)} from ${delivery.company}.${learned.changedFields.length ? " Scanner correction learned." : " Scan pattern confirmed."}`);
   }
 
   function clearOCR(clearFile = true) {
@@ -2768,6 +3072,7 @@
     els.ocrMinutesInput.value = "";
     els.ocrSavePreview.textContent = "Review the detected fields before saving.";
     els.ocrSavePreview.className = "delivery-preview";
+    if (els.ocrLearningHint) els.ocrLearningHint.textContent = "Corrections improve future scans on this device. Screenshots are never stored in the learning profile.";
     els.scanStatus.classList.add("hidden");
     els.scanStatus.classList.remove("loading", "success", "failed");
     if (clearFile) {
@@ -2799,17 +3104,18 @@
     if (earnings) confidence += 28;
     if (miles) confidence += 22;
     if (minutes) confidence += 8;
-    return {
+    return applyOCRLearning({
       platform,
       platformConfidence: platformResult.platformConfidence,
       platformEvidence: platformResult.evidence,
       merchant,
       restaurant: merchant,
+      merchantType: inferMerchantType(merchant, rawText),
       earnings,
       miles,
       minutes,
       confidence: Math.min(confidence, 98)
-    };
+    }, rawText);
   }
 
   function ocrLines(text) {
@@ -3151,6 +3457,7 @@
       if (/total|earn|earning|payout|pay|paid|estimate|offer|guarantee|including|tip|fare|base/.test(context)) score += 3;
       if (/balance|cash\s*out|weekly|month|year|tax|fee|subscription|debt|per\s*hour|\/\s*hr/.test(context)) score -= 2;
       if (value >= 2 && value <= 80) score += 1;
+      score += learnedNumericContextBoost("earnings", context);
       matches.push({ value, score, index });
     };
     const dollarRegex = /(?:\$|usd\s*)\s*([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{2})?|[0-9]{1,4}(?:[.,][0-9]{2})?)/gi;
@@ -3174,6 +3481,7 @@
       let score = 1;
       if (/total|trip|delivery|distance|route/.test(context)) score += 2;
       if (/mph|minutes|minute|away|radius/.test(context)) score -= 1;
+      score += learnedNumericContextBoost("miles", context);
       matches.push({ value, score, index: m.index });
     }
     if (!matches.length) return 0;
@@ -3192,6 +3500,7 @@
       let score = 1;
       if (/estimate|estimated|time|duration|trip|delivery|total/.test(context)) score += 2;
       if (/away|pickup|arrive|eta|radius/.test(context)) score -= 1;
+      score += learnedNumericContextBoost("minutes", context);
       matches.push({ value, score, index: m.index });
     }
     if (!matches.length) return 0;
@@ -3606,12 +3915,14 @@
         delivery: ["id", "date", "createdAt", "updatedAt", "company", "merchant", "restaurant", "earnings", "miles", "minutes", "zone", "note", "notes", "source", "ocrText", "ocrConfidence", "tags", "deleted", "version"],
         settings: ["dailyGoal", "defaultCompany", "defaultZone", "gasPrice", "vehicleMpg", "maintenanceCostPerMile", "mileageDeductionRate", "minimumDollarPerMile", "minimumDollarPerHour", "minimumPayout", "maxMiles", "customZones", "theme", "appDataVersion"],
         shift: ["active", "paused", "pausedAt", "breaks", "startedAt", "endedAt", "lastSummary", "shiftHistory", "recommendation", "metrics", "appDataVersion"],
-        decision: ["id", "outcome", "company", "pay", "miles", "minutes", "zone", "note", "source", "createdAt", "version"]
+        decision: ["id", "outcome", "company", "pay", "miles", "minutes", "zone", "note", "source", "createdAt", "version"],
+        ocrLearning: ["version", "corrections"]
       },
       settings,
       shift,
       deliveries,
-      decisions
+      decisions,
+      ocrLearning
     };
   }
 
@@ -3634,6 +3945,8 @@
     const hasDeliveries = Array.isArray(parsed.deliveries);
     const rawDecisions = Array.isArray(parsed.decisions) ? parsed.decisions : [];
     const importedDecisions = normalizeDecisions(rawDecisions);
+    const ocrLearningIncluded = Boolean(parsed.ocrLearning && typeof parsed.ocrLearning === "object" && !Array.isArray(parsed.ocrLearning));
+    const importedOCRLearning = normalizeOCRLearning(parsed.ocrLearning);
     const settingsIncluded = Boolean(parsed.settings && typeof parsed.settings === "object" && !Array.isArray(parsed.settings));
     const shiftIncluded = Boolean(parsed.shift && typeof parsed.shift === "object" && !Array.isArray(parsed.shift));
     if (!hasDeliveries && !settingsIncluded && !shiftIncluded) {
@@ -3654,6 +3967,9 @@
       deliveries: importedDeliveries,
       decisions: importedDecisions,
       decisionCount: importedDecisions.length,
+      ocrLearning: importedOCRLearning,
+      ocrLearningIncluded,
+      correctionCount: importedOCRLearning.corrections.length,
       deliveryCount: importedDeliveries.length,
       settingsIncluded,
       shiftIncluded,
@@ -3676,6 +3992,7 @@
       els.importPreviewMeta.innerHTML = `
         <div><span>Deliveries</span><strong>${pendingImport.deliveryCount}</strong></div>
         <div><span>Decisions</span><strong>${pendingImport.decisionCount || 0}</strong></div>
+        <div><span>Scanner learning</span><strong>${pendingImport.ocrLearningIncluded ? `${pendingImport.correctionCount || 0} included` : "Not included"}</strong></div>
         <div><span>Settings</span><strong>${pendingImport.settingsIncluded ? "Included" : "Not included"}</strong></div>
         <div><span>Shift</span><strong>${pendingImport.shiftIncluded ? "Included" : "Not included"}</strong></div>
         <div><span>Exported</span><strong>${escapeHTML(parseBackupDate(pendingImport.exportedAt))}</strong></div>
@@ -3768,6 +4085,7 @@
     if (mode === "replace") {
       deliveries = normalizeDeliveries(pendingImport.deliveries);
       decisions = normalizeDecisions(pendingImport.decisions || []);
+      if (pendingImport.ocrLearningIncluded) ocrLearning = normalizeOCRLearning(pendingImport.ocrLearning);
       if (pendingImport.settingsIncluded) settings = normalizeSettings(pendingImport.settings);
       if (pendingImport.shiftIncluded) shift = normalizeShift(pendingImport.shift);
       persistNormalizedState();
@@ -3783,8 +4101,10 @@
     for (const item of normalizeDecisions(pendingImport.decisions || [])) {
       if (!existingDecisionIds.has(item.id)) { decisions.push(item); existingDecisionIds.add(item.id); }
     }
+    ocrLearning = mergeOCRLearning(ocrLearning, pendingImport.ocrLearning);
     writeJSON(STORE_KEY, deliveries);
     writeJSON(DECISIONS_KEY, decisions);
+    writeJSON(OCR_LEARNING_KEY, ocrLearning);
     render();
     clearPendingImport();
     toast(`Backup merged. Added ${result.added} deliveries; skipped ${result.skipped} duplicates.`);
@@ -3797,6 +4117,7 @@
     if (!confirm(`Restore rollback from ${parseBackupDate(rollback.savedAt || rollback.exportedAt)}? This replaces current local data.`)) return;
     deliveries = normalizeDeliveries(validation.deliveries);
     decisions = normalizeDecisions(validation.decisions || []);
+    if (validation.ocrLearningIncluded) ocrLearning = normalizeOCRLearning(validation.ocrLearning);
     settings = validation.settingsIncluded ? normalizeSettings(validation.settings) : settings;
     shift = validation.shiftIncluded ? normalizeShift(validation.shift) : shift;
     persistNormalizedState();
@@ -3837,6 +4158,7 @@
     });
     deliveries = normalizeDeliveries(validation.deliveries);
     decisions = normalizeDecisions(validation.decisions || []);
+    if (validation.ocrLearningIncluded) ocrLearning = normalizeOCRLearning(validation.ocrLearning);
     settings = validation.settingsIncluded ? normalizeSettings(validation.settings) : settings;
     shift = validation.shiftIncluded ? normalizeShift(validation.shift) : shift;
     persistNormalizedState();
@@ -3867,6 +4189,7 @@
     saveSafetySnapshot("pre-clear-all-data snapshot");
     deliveries = [];
     decisions = [];
+    ocrLearning = normalizeOCRLearning(null);
     settings = normalizeSettings({});
     shift = normalizeShift({ active: false, startedAt: null, endedAt: null, shiftHistory: [] });
     persistNormalizedState();
@@ -3972,6 +4295,7 @@
     els.backupBtn.addEventListener("click", exportBackup);
     els.privacyExportAllBtn.addEventListener("click", exportAllData);
     els.privacyRestoreSafetyBtn.addEventListener("click", restoreSafetyBackup);
+    if (els.resetOcrLearningBtn) els.resetOcrLearningBtn.addEventListener("click", resetOCRLearning);
     els.resetSettingsBtn.addEventListener("click", resetSettingsOnly);
     els.resetDeliveriesBtn.addEventListener("click", resetDeliveriesOnly);
     els.clearAllDataBtn.addEventListener("click", clearAllLocalData);

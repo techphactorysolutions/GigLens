@@ -50,7 +50,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         cls.parser.feed(cls.html)
 
     def test_required_package_files_exist(self):
-        for rel in ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', 'icons/giglens-icon-180.png', 'icons/giglens-icon-180-v401.png', 'icons/giglens-icon-192-v401.png', 'icons/giglens-icon-512-v401.png', 'icons/giglens-icon-1024-v401.png', 'apple-touch-icon.png', 'favicon.png', '.nojekyll', '404.html', 'CLAUDE_REVIEW_AUDIT.md']:
+        for rel in ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', 'icons/giglens-icon-180.png', 'icons/giglens-icon-180-v410.png', 'icons/giglens-icon-192-v410.png', 'icons/giglens-icon-512-v410.png', 'icons/giglens-icon-1024-v410.png', 'apple-touch-icon-v410.png', 'favicon-v410.png', 'apple-touch-icon.png', 'favicon.png', '.nojekyll', '404.html', 'CLAUDE_REVIEW_AUDIT.md', 'OCR_LEARNING_AUDIT.md']:
             self.assertTrue((PROJECT_ROOT / rel).is_file(), f'missing {rel}')
 
     def test_html_referenced_local_assets_exist(self):
@@ -82,9 +82,9 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         self.assertIn('./styles.css', cached_assets)
         self.assertIn('./app.js', cached_assets)
         self.assertIn('./manifest.json', cached_assets)
-        self.assertIn('./icons/giglens-icon-192-v401.png', cached_assets)
-        self.assertIn('./icons/giglens-icon-512-v401.png', cached_assets)
-        self.assertIn('CACHE_VERSION = "v38-giglens-icon-ocr-repair"', self.service_worker)
+        self.assertIn('./icons/giglens-icon-192-v410.png', cached_assets)
+        self.assertIn('./icons/giglens-icon-512-v410.png', cached_assets)
+        self.assertIn('CACHE_VERSION = "v39-giglens-learning-ui-repair"', self.service_worker)
         self.assertIn('OFFLINE_FALLBACK = "./index.html"', self.service_worker)
         self.assertIn('networkFirst(request)', self.service_worker)
         self.assertIn('staleWhileRevalidate(request)', self.service_worker)
@@ -270,8 +270,8 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
 
 
     def test_phase2_storage_schema_and_migration_hooks_exist(self):
-        self.assertIn('const DATA_VERSION = 12', self.app_js)
-        self.assertIn('const BACKUP_VERSION = 13', self.app_js)
+        self.assertIn('const DATA_VERSION = 13', self.app_js)
+        self.assertIn('const BACKUP_VERSION = 14', self.app_js)
         required_delivery_fields = [
             'date:', 'merchant,', 'restaurant:', 'note:', 'notes,', 'tags:', 'deleted:', 'ocrText:', 'ocrConfidence:'
         ]
@@ -550,7 +550,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         for token in [
             'apple-mobile-web-app-capable', 'application-name', 'color-scheme',
             'offline-banner', 'Offline mode is active', 'updateNetworkStatus',
-            'serviceWorker', 'giglens-v38-giglens-icon-ocr-repair', 'OFFLINE_FALLBACK',
+            'serviceWorker', 'giglens-v39-giglens-learning-ui-repair', 'OFFLINE_FALLBACK',
             'cacheCoreAssets', 'deleteOldCaches', 'staleWhileRevalidate',
             'screenshot OCR may need internet', 'OCR library is not loaded yet'
         ]:
@@ -780,6 +780,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
             'DEPLOYMENT.md',
             'SECURITY_AUDIT.md',
             'CLAUDE_REVIEW_AUDIT.md',
+            'OCR_LEARNING_AUDIT.md',
             '_redirects',
         ]
         for rel in scanned:
@@ -788,6 +789,38 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
             text = path.read_text(encoding='utf-8')
             for pattern in secret_patterns:
                 self.assertIsNone(re.search(pattern, text), f'possible exposed secret in {rel}: {pattern}')
+
+
+    def test_local_ocr_correction_learning_and_mobile_clarity_exist(self):
+        for token in [
+            'OCR_LEARNING_KEY = "giglens.ocrLearning.v1"',
+            'function normalizeOCRLearning',
+            'function recordOCRCorrection',
+            'function applyOCRLearning',
+            'function mergeOCRLearning',
+            'function resetOCRLearning',
+            'learnedNumericContextBoost',
+            'ocrLearningStatus',
+            'resetOcrLearningBtn',
+        ]:
+            self.assertIn(token, self.app_js + self.html)
+        self.assertIn('brand-mark-inline', self.html)
+        self.assertIn('<svg viewBox="0 0 180 180"', self.html)
+        self.assertNotIn('<img class="brand-mark"', self.html)
+        for token in [
+            '.mobile-action-dock { display: none !important;',
+            '.bottom-tabs .tab-btn[data-tab="add"] { display: none;',
+            'grid-template-columns: repeat(5, minmax(0, 1fr))',
+            'GigLens 4.1.0',
+        ]:
+            self.assertIn(token, self.css)
+        smoke = (PROJECT_ROOT / 'tools' / 'smoke-startup.js').read_text(encoding='utf-8')
+        for token in [
+            'runOCRLearningSmoke',
+            'local scanner learning did not apply',
+            'Reset scanner learning did not clear',
+        ]:
+            self.assertIn(token, smoke)
 
     def test_fixed_overlay_components_keep_fixed_position(self):
         """Modern visual refreshes must not demote overlays/navigation from fixed positioning."""
@@ -809,11 +842,11 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
     def test_giglens_home_screen_icons_are_real_pngs(self):
         import struct
         expected = {
-            'apple-touch-icon.png': (180, 180),
-            'icons/giglens-icon-180-v401.png': (180, 180),
-            'icons/giglens-icon-192-v401.png': (192, 192),
-            'icons/giglens-icon-512-v401.png': (512, 512),
-            'icons/giglens-icon-1024-v401.png': (1024, 1024),
+            'apple-touch-icon-v410.png': (180, 180),
+            'icons/giglens-icon-180-v410.png': (180, 180),
+            'icons/giglens-icon-192-v410.png': (192, 192),
+            'icons/giglens-icon-512-v410.png': (512, 512),
+            'icons/giglens-icon-1024-v410.png': (1024, 1024),
         }
         for rel, size in expected.items():
             data = (PROJECT_ROOT / rel).read_bytes()
@@ -822,8 +855,8 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
             self.assertEqual((width, height), size, f'{rel} has wrong dimensions')
             color_type = data[25]
             self.assertEqual(color_type, 2, f'{rel} should be an opaque RGB PNG for iOS')
-        self.assertIn('rel="apple-touch-icon" href="./apple-touch-icon.png"', self.html)
-        self.assertIn('giglens-icon-180-v401.png', self.html)
+        self.assertIn('rel="apple-touch-icon" href="./apple-touch-icon-v410.png"', self.html)
+        self.assertIn('giglens-icon-180-v410.png', self.html)
 
     def test_ocr_worker_has_timeout_progress_and_valid_v5_core_path(self):
         for token in [
@@ -843,8 +876,8 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
 
     def test_v3_release_candidate_metadata_and_docs_exist(self):
         package = json.loads((PROJECT_ROOT / 'package.json').read_text(encoding='utf-8'))
-        self.assertEqual(package.get('version'), '4.0.1')
-        self.assertIn('v38-giglens-icon-ocr-repair', self.service_worker)
+        self.assertEqual(package.get('version'), '4.1.0')
+        self.assertIn('v39-giglens-learning-ui-repair', self.service_worker)
         self.assertIn('Designed by Tech Phactory Solutions', self.html)
         self.assertIn('app-credit', self.html)
         self.assertIn('maker-line', self.html)
@@ -856,7 +889,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         for token in ['v3 Release Candidate', 'Manual QA checklist', 'Known limitations', 'GitHub Pages']:
             self.assertIn(token, readme)
         self.assertIn('Final Release Audit', audit)
-        self.assertIn('4.0.1', changelog)
+        self.assertIn('4.1.0', changelog)
 
 
     def test_luxury_refinement_and_restaurant_ocr_exist(self):

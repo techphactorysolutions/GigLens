@@ -16,13 +16,13 @@
   <meta name="description" content="GigLens turns gig-app screenshots into a private, local-first earnings, mileage, profit, and performance command center." />
   <title>GigLens</title>
   <link rel="manifest" href="./manifest.json" />
-  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-  <link rel="apple-touch-icon" sizes="180x180" href="./icons/giglens-icon-180-v401.png" />
-  <link rel="apple-touch-icon-precomposed" href="./icons/giglens-icon-180-v401.png" />
-  <link rel="icon" type="image/png" href="./favicon.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./icons/giglens-icon-192-v401.png" />
-  <link rel="icon" type="image/png" sizes="512x512" href="./icons/giglens-icon-512-v401.png" />
-  <link rel="icon" type="image/png" sizes="1024x1024" href="./icons/giglens-icon-1024-v401.png" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon-v410.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/giglens-icon-180-v410.png" />
+  <link rel="apple-touch-icon-precomposed" href="./icons/giglens-icon-180-v410.png" />
+  <link rel="icon" type="image/png" href="./favicon-v410.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/giglens-icon-192-v410.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="./icons/giglens-icon-512-v410.png" />
+  <link rel="icon" type="image/png" sizes="1024x1024" href="./icons/giglens-icon-1024-v410.png" />
   <link rel="stylesheet" href="./styles.css" />
   <script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" integrity="sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F" crossorigin="anonymous"></script>
   <script defer src="./app.js"></script>
@@ -32,7 +32,24 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="brand-lockup">
-        <img class="brand-mark" src="./icons/giglens-icon-180.png" width="52" height="52" alt="" aria-hidden="true" />
+        <div class="brand-mark brand-mark-inline" aria-hidden="true">
+          <svg viewBox="0 0 180 180" focusable="false" role="presentation">
+            <defs>
+              <linearGradient id="brandLensGradient" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#2df58a" />
+                <stop offset="0.55" stop-color="#30dce8" />
+                <stop offset="1" stop-color="#4ca8ff" />
+              </linearGradient>
+            </defs>
+            <rect x="13" y="13" width="154" height="154" rx="36" fill="#081728" stroke="#79e8ff" stroke-width="2" />
+            <circle cx="82" cy="78" r="39" fill="none" stroke="url(#brandLensGradient)" stroke-width="10" />
+            <path d="M109 106 L139 136" stroke="url(#brandLensGradient)" stroke-width="12" stroke-linecap="square" />
+            <path d="M52 92 L69 72 L84 83 L102 58 L123 74" fill="none" stroke="#f7fbff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="52" cy="92" r="5" fill="#ff5f69" stroke="#fff" stroke-width="2" />
+            <circle cx="84" cy="83" r="5" fill="#ffd166" stroke="#fff" stroke-width="2" />
+            <circle cx="123" cy="74" r="5" fill="#2df58a" stroke="#fff" stroke-width="2" />
+          </svg>
+        </div>
         <div>
           <p class="eyebrow">Multi-App Driver Intelligence</p>
           <h1>GigLens</h1>
@@ -247,6 +264,7 @@
               </label>
             </div>
             <div id="ocrSavePreview" class="delivery-preview">Review the detected fields before saving.</div>
+            <p id="ocrLearningHint" class="learning-hint">Corrections improve future scans on this device. Screenshots are never stored in the learning profile.</p>
             <div class="inline-actions ocr-actions">
               <button id="saveOcrBtn" class="primary-btn compact" type="button">Save Reviewed</button>
               <button id="applyOcrBtn" class="secondary-btn compact" type="button">Use in Form</button>
@@ -632,6 +650,14 @@
             <p id="privacyDataLocation" class="muted">GigLens stores deliveries, settings, shifts, imports, and rollback snapshots locally in this browser using namespaced <code>localStorage</code> keys. There is no account, backend, cloud sync, GPS upload, or server database in this static PWA.</p>
             <div id="storageUsageEstimate" class="storage-usage-card">Storage estimate unavailable until the app renders.</div>
             <div id="storageUsageDetails" class="privacy-key-list empty">No local GigLens data has been measured yet.</div>
+            <article class="ocr-learning-card" aria-label="Local OCR correction learning">
+              <div>
+                <p class="eyebrow">Scanner learning</p>
+                <strong>Local correction memory</strong>
+                <span id="ocrLearningStatus">No corrections learned yet.</span>
+              </div>
+              <button id="resetOcrLearningBtn" class="secondary-btn compact" type="button">Reset scanner learning</button>
+            </article>
             <div class="privacy-action-grid">
               <button id="privacyExportAllBtn" class="secondary-btn full" type="button">Export All Data</button>
               <label class="secondary-btn full import-btn" for="importInput">Import Backup</label>
@@ -679,6 +705,7 @@
             <pre id="quickOcrText"></pre>
           </details>
           <button id="quickClearScanBtn" class="ghost-btn compact hidden" type="button" aria-label="Clear quick screenshot scan">Clear scan</button>
+          <p id="quickLearningHint" class="learning-hint">Correct any field before saving. GigLens remembers the correction locally for similar future screenshots.</p>
         </section>
 
         <details id="quickManualDetails" class="quick-manual-details" open>

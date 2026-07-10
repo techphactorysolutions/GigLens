@@ -141,3 +141,11 @@ npm run syntax
 npm run smoke
 python -m unittest discover -s tests -v
 ```
+
+## GigLens 4.1 upgrade checklist
+
+1. Replace the old repository files with the complete unzipped 4.1 release. Do not upload only `index.html`; the new versioned icons, manifest, service worker, CSS, and JavaScript must be deployed together.
+2. Confirm `icons/giglens-icon-180-v410.png`, `icons/giglens-icon-192-v410.png`, `icons/giglens-icon-512-v410.png`, `apple-touch-icon-v410.png`, and `service-worker.js` are visible at the repository root paths.
+3. Open the deployed site in Safari and reload once so `giglens-v39-giglens-learning-ui-repair` activates and removes older GigLens/DriveLedger caches.
+4. If an old Home Screen shortcut still uses the prior icon, remove that shortcut and add GigLens to the Home Screen again.
+5. The visible icon inside the app is embedded in `index.html`, so a broken in-app icon after deployment means the new `index.html` has not reached the browser yet.
