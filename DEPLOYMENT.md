@@ -1,15 +1,13 @@
-# DriveLedger Deployment Guide
+# GigLens GitHub Pages Deployment
 
-DriveLedger is a static, local-first PWA. It does not need a backend, database server, build step, or environment variables. You can deploy it with Netlify Drop by dragging the unzipped project folder into the Netlify Drop upload area.
+GigLens 4.2.0 is a static, local-first PWA. It does not require a backend, database server, API key, password, environment variable, or build command.
 
-## GitHub Pages deployment
+## Publish from an iPhone or iPad
 
-DriveLedger can run from GitHub Pages as a plain static site. This package includes `.nojekyll` so GitHub Pages does not process the app with Jekyll, and `404.html` as a simple fallback page.
-
-1. Download the latest DriveLedger release ZIP.
-2. Unzip it.
-3. Upload the **contents** of the unzipped folder to the root of your GitHub repository. Do not upload only the ZIP file. Do not leave the app inside a nested folder.
-4. Confirm these files are visible at the repository root:
+1. Extract the GigLens release ZIP in the Files app.
+2. Open the GitHub repository in Safari or the GitHub app.
+3. Upload the **contents** of the extracted folder to the repository root. `index.html` must be visible at the top level; do not upload only the ZIP and do not leave the files inside another folder.
+4. Confirm the repository root contains at least:
    - `index.html`
    - `styles.css`
    - `app.js`
@@ -17,135 +15,82 @@ DriveLedger can run from GitHub Pages as a plain static site. This package inclu
    - `service-worker.js`
    - `.nojekyll`
    - `404.html`
-   - `icons/icon-192.png`
-   - `icons/icon-512.png`
-5. Open **Settings → Pages**.
-6. Choose **Deploy from a branch**.
-7. Select branch `main` and folder `/root`.
-8. Save and wait for the Pages deployment.
-9. Open the published URL. For a project repo it will look like `https://YOUR-USERNAME.github.io/REPO-NAME/`.
-10. Add a test delivery, reload, and confirm localStorage persistence.
+   - `404.js`
+   - `icons/`
+5. Commit the files to the `main` branch.
+6. Open **Repository Settings → Pages**.
+7. Under **Build and deployment**, choose **Deploy from a branch**.
+8. Select `main`, choose `/root`, and save.
+9. Wait for the Pages deployment to finish, then open the published HTTPS address.
 
-If GitHub says the deployment failed, click the red failed deployment or open the Actions/Pages build log. The most common fixes are: move `index.html` to the repo root, change Pages to `main /root`, commit `.nojekyll`, or unzip the package before uploading.
-
-## Netlify Drop deployment
-
-1. Download the latest DriveLedger release ZIP.
-2. Unzip the file on your computer.
-3. Confirm these files are at the root of the unzipped folder:
-   - `index.html`
-   - `styles.css`
-   - `app.js`
-   - `manifest.json`
-   - `service-worker.js`
-   - `_redirects`
-   - `icons/icon-192.png`
-   - `icons/icon-512.png`
-4. Open Netlify Drop in your browser.
-5. Drag the unzipped DriveLedger folder into the upload area.
-6. Wait for Netlify to publish the site.
-7. Open the generated HTTPS URL.
-8. Add one test delivery, reload, and confirm the delivery persists.
-
-## Why `_redirects` is included
-
-DriveLedger is a single-page static app. The `_redirects` file contains:
+For a project repository, the address normally follows this shape:
 
 ```text
-/*    /index.html   200
+https://YOUR-USERNAME.github.io/YOUR-REPOSITORY/
 ```
 
-This lets Netlify return the app shell for unknown routes while still serving real static assets directly.
+All runtime paths are relative, so GigLens works from a GitHub Pages project subdirectory.
 
-## iPhone install checklist
+## Upgrade an existing GigLens deployment
 
-1. Open the Netlify HTTPS URL in Safari.
-2. Tap the Share button.
+1. Replace the old repository files with all files from the new release.
+2. Keep `index.html`, `app.js`, `styles.css`, `manifest.json`, `service-worker.js`, and the icon files from the same release together.
+3. Wait for GitHub Pages to finish deploying the commit.
+4. Open the site in Safari and reload it once.
+5. Close and reopen the installed Home Screen app.
+
+Updating hosted files does not intentionally erase local GigLens data. The records remain in that browser's site storage, but exporting a JSON backup before every upgrade is still recommended.
+
+## Install on an iPhone
+
+1. Open the published GigLens URL in Safari, not an in-app browser.
+2. Tap **Share**.
 3. Tap **Add to Home Screen**.
-4. Confirm the name **DriveLedger**.
-5. Launch DriveLedger from the Home Screen icon.
-6. Add a test delivery.
-7. Close and reopen the Home Screen app.
-8. Confirm the delivery persists.
+4. Confirm the name **GigLens** and tap **Add**.
+5. Launch GigLens from the new Home Screen icon.
 
-## iPad install checklist
+iOS caches Home Screen artwork aggressively. If an older shortcut still shows the wrong or blank icon, remove that shortcut, reload the published site in Safari, and add it to the Home Screen again.
 
-1. Open the Netlify HTTPS URL in iPad Safari.
-2. Tap Share.
-3. Tap **Add to Home Screen**.
-4. Launch from the Home Screen icon.
-5. Test Today, Quick Add, Decide, Analytics, History, and Settings.
-6. Rotate if needed and confirm the layout remains usable.
+## Release verification checklist
 
-## Offline reload checklist
-
-1. Open the deployed app while online.
-2. Reload once to allow the service worker to cache the app shell.
-3. Add a test delivery.
-4. Turn on Airplane Mode.
-5. Reopen or reload DriveLedger.
-6. Confirm the app shell loads offline.
-7. Confirm Today, Quick Add, History, Analytics, Export, and Settings still render.
-8. Screenshot OCR may require internet if Tesseract.js has not already loaded.
-
-## Local data persistence checklist
-
-DriveLedger stores data locally in browser `localStorage` under `driveledger.*` keys. Netlify does not store user deliveries.
-
-1. Add a test delivery.
-2. Reload the page.
-3. Confirm the delivery remains.
-4. Export a JSON backup from the Data Control Center.
-5. Store the backup somewhere outside Safari/browser storage.
-6. Import the backup in a separate test browser/profile to confirm restore works.
+- GigLens opens from the GitHub Pages URL without a blank screen.
+- The lens icon appears in Safari and on a newly added Home Screen shortcut.
+- A manual delivery saves and remains after reload.
+- Quick Add accepts an explicit `0` when mileage is not available yet.
+- Starting, pausing, resuming, and ending a shift produces break-adjusted active time.
+- Tax Settings defaults to Automatic and explains the Jan–Jun / Jul–Dec 2026 rate split.
+- History shows older records through the working Show Older History action when more than 30 days exist.
+- Screenshot scanning completes, fails with an editable fallback, or times out clearly; it never remains indefinitely in a loading state.
+- The first OCR scan is tested while online because the pinned OCR components are loaded on demand.
+- History, Analytics, CSV export, JSON backup, import preview, and restore work.
+- After the shell has loaded online once, the core app opens in Airplane Mode. OCR may still need internet unless its remote components are already available to the browser.
 
 ## Troubleshooting
 
-### GitHub Pages deployment failed
+### GitHub Pages reports a failed deployment
 
-Open the failed deployment log from the red deployment entry. Check these first:
-
-- `index.html` must be at the repository root.
-- GitHub Pages should point to branch `main`, folder `/root`.
-- The release ZIP must be unzipped before uploading.
-- `.nojekyll` should be present at the root to disable Jekyll processing.
-- Runtime files should not be inside a nested folder such as `DriveLedger_v3_6_3/index.html`.
-
+- Confirm `index.html` is at the repository root.
+- Confirm Pages is configured for `main` and `/root`.
+- Confirm `.nojekyll` is committed.
+- Upload extracted files, not only the release ZIP.
+- Open the failed Pages deployment under **Actions** for the exact error.
 
 ### The app shows an old version
 
-Service workers can keep an older app shell until the next reload cycle. Reload the page once or twice, then close and reopen the installed Home Screen app.
+Wait for the current Pages deployment to finish, reload the Safari page, and close/reopen the Home Screen app. GigLens 4.2.0 uses the `giglens-v42-giglens-audit-performance` service-worker cache and deletes older GigLens/DriveLedger caches during activation.
 
-### The app does not open offline
+### Screenshot OCR cannot load
 
-Open the app once while online and reload it after deployment. The service worker must install and cache the core shell before offline reload can work.
+Check the internet connection and retry. GigLens loads the pinned OCR library only when scanning begins so a slow third-party script cannot delay normal app startup. Manual entry, tracking, analytics, and exports remain available when OCR is unavailable.
 
-### Screenshot OCR fails
+### Local records are missing
 
-OCR uses Tesseract.js from a CDN. If the device is offline, the CDN is blocked, or the library has not loaded yet, OCR may fail safely. Use Quick Add or manual Add as the fallback.
+GigLens data belongs to the exact site origin and browser profile. Private browsing, clearing Safari website data, changing the GitHub Pages URL, or switching devices can create a separate empty store. Restore a previously exported GigLens JSON backup when needed.
 
-### My data disappeared
-
-The app is local-first. Browser data clearing, Safari website-data removal, private browsing, or switching devices can remove local data. Use **Export All Data** regularly and keep JSON backups outside the browser.
-
-### Netlify deploy shows a blank page
-
-Make sure you uploaded the folder contents with `index.html` at the deployment root. Do not upload a parent folder that contains the app folder one level deeper.
-
-## Release verification commands
-
-These commands are optional but useful before deployment:
+## Optional local verification
 
 ```bash
 npm run syntax
 npm run smoke
-python -m unittest discover -s tests -v
+npm test
 ```
-
-## GigLens 4.1 upgrade checklist
-
-1. Replace the old repository files with the complete unzipped 4.1 release. Do not upload only `index.html`; the new versioned icons, manifest, service worker, CSS, and JavaScript must be deployed together.
-2. Confirm `icons/giglens-icon-180-v410.png`, `icons/giglens-icon-192-v410.png`, `icons/giglens-icon-512-v410.png`, `apple-touch-icon-v410.png`, and `service-worker.js` are visible at the repository root paths.
-3. Open the deployed site in Safari and reload once so `giglens-v39-giglens-learning-ui-repair` activates and removes older GigLens/DriveLedger caches.
-4. If an old Home Screen shortcut still uses the prior icon, remove that shortcut and add GigLens to the Home Screen again.
-5. The visible icon inside the app is embedded in `index.html`, so a broken in-app icon after deployment means the new `index.html` has not reached the browser yet.

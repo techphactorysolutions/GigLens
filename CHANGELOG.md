@@ -1,3 +1,41 @@
+## 4.2.0 — Full audit, safer detection, date-aware tax estimates, and UI/performance polish
+
+- Restricted similar-screenshot platform learning to shared app-specific evidence so generic delivery words cannot spread a wrong label.
+- Restored conservative lower-screen accent analysis in both scan flows: green supports Uber Eats, red DoorDash, orange Grubhub, and blue remains ambiguous between Spark/Amazon without text evidence.
+- Expanded store recognition and stopped replacing arbitrary taqueria names with a generic restaurant label.
+- Repaired imported pause state and merged duplicate/overlapping breaks before active-hour calculations.
+- Added automatic date-aware mileage estimates: 72.5¢/mi for Jan–Jun 2026 and 76¢/mi for Jul–Dec 2026, with per-row Tax CSV rates and preserved custom-rate mode.
+- Added progressive 30-day History rendering and single-pass custom-zone delivery counts.
+- Added platform-color History cards, clearer tax settings, refined surfaces/navigation, responsive hover treatment, mobile polish, and off-screen rendering hints.
+- Removed hidden duplicate mobile-dock markup and redundant versioned/legacy icon copies; switched HTML, manifest, and service worker to the canonical icon set.
+- Bumped data schema to `15`, backup schema to `16`, package to `4.2.0`, and cache to `giglens-v42-giglens-audit-performance`.
+- Expanded executable regressions for OCR learning isolation, visual evidence conflicts, pause migration, break union, date-aware tax export, progressive History, canonical PWA assets, and visible action wiring.
+
+## 4.1.2 — Stability, shift timing, and GitHub release repair
+
+- Decoupled normal app startup from the remote OCR script. The pinned Tesseract.js loader now starts on demand when the user selects a screenshot.
+- Added bounded OCR worker cleanup so an unresponsive `terminate()` call cannot leave the scanner loading indefinitely.
+- Added stale-scan generation guards so an older, slower OCR result cannot overwrite a newer selected screenshot.
+- Added clear image-type and 20 MB size validation before OCR begins.
+- Fixed the Profit Engine to subtract persisted break time from active hours and hourly metrics.
+- Added accurate accumulation for multiple same-day shifts and stored per-shift breaks/active hours in shift history.
+- Changed end-shift recaps to use only deliveries completed within that shift instead of cumulative unrelated records.
+- Allowed an explicit zero-mile value in Manual Add, matching Quick Add and OCR review behavior.
+- Repaired Decision CSV export, which referenced a removed `downloadFile()` helper and crashed when tapped; the export now uses the shared Share Sheet/download path.
+- Updated the new-install U.S. business-mileage default to the 2026 rate of `0.725` per mile and migrated the exact prior `0.67` default while preserving other custom rates.
+- Updated mileage-rate display precision and added a tax-method warning.
+- Removed obsolete Netlify-only files and rewrote deployment documentation for GitHub Pages.
+- Bumped data schema to `14`, backup schema to `15`, package to `4.1.2`, and cache to `giglens-v41-giglens-stability-repair`.
+- Added executable regressions for break-adjusted timing, multiple shifts, explicit zero mileage, bounded OCR cleanup, and concurrent scan ordering.
+
+## 4.1.1 — Merchant type audit repair
+- Fixed a data-normalization regression that dropped `merchantType` from saved OCR and imported delivery records.
+- Repaired known-store OCR detection, including Walmart when it also appears as Spark platform evidence.
+- History now labels saved pickups as Restaurant, Store, or Merchant instead of hardcoding every pickup as Restaurant.
+- OCR review now displays the detected merchant type.
+- Added store regression cases for Schnucks, Walmart, and Best Buy.
+- Updated the service-worker cache to `giglens-v40-giglens-merchant-type-audit-fix`.
+
 # Changelog
 
 ## 4.1.0 — OCR correction learning and mobile UI repair

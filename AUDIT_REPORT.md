@@ -1,3 +1,80 @@
+## GigLens 4.2.0 full audit, repair, and UI/performance pass
+
+Source of truth: `GigLens_v4_1_2_Stability_Repair_GitHub.zip`. The archive was traversal-checked and extracted into an isolated workspace before any changes. Its baseline JavaScript syntax, executable smoke suite, and all 41 existing Python tests passed, so this release preserves the working architecture and applies targeted repairs rather than replacing the app.
+
+### Confirmed findings and repairs
+
+- **Unsafe learned platform transfer:** similar OCR records could reuse a manually corrected platform using only generic tokens such as `delivery`, `pickup`, `offer`, or `miles`. Cross-screenshot platform learning now requires a shared token distinctive to the corrected platform. Exact reviewed screenshot signatures still reuse the driver's correction.
+- **Visual platform evidence had regressed out of the scan path:** both Quick Scan and full OCR now sample the lower screenshot region in parallel with OCR. A dominant green/red/orange interface accent may support Uber Eats/DoorDash/Grubhub only when the text also contains an offer workflow and numeric offer evidence. Blue never chooses Spark versus Amazon Flex by itself. Strong app text is not overridden by conflicting color.
+- **Merchant normalization could erase a real business name:** the broad `taqueria` rule returned “Mexican Restaurant” instead of the actual merchant. It was replaced with specific chain normalization, expanded retail/grocery patterns, and stronger company context for store classification.
+- **Imported pause records could disagree with their breaks:** an open break with `paused: false` looked resumed, while `pausedAt` without a break failed to subtract time. Shift migration now derives a consistent paused state, creates a missing open break, rejects reversed break intervals, and merges duplicate/overlapping intervals so time is not subtracted twice.
+- **The 2026 mileage estimate became stale midyear:** the previous global `0.725` default was no longer correct for all 2026 dates. Automatic mode now uses 72.5¢ per mile for Jan 1–Jun 30 and 76¢ per mile for Jul 1–Dec 31, summing deductions per delivery date and exporting the actual row rate. Existing non-default rates migrate to custom mode. The July rate is based on [IRS Announcement 2026-11](https://www.irs.gov/irb/2026-29_IRB); all tax figures remain estimates and users should verify their eligibility.
+- **History DOM growth was unbounded:** History now renders 30 days initially and exposes a wired Show Older History action. Exports and analytics still process the complete local dataset. Custom-zone counts were changed from repeated filter/sort passes to one count map.
+- **Redundant app-shell and icon assets remained:** hidden duplicate mobile-dock HTML was removed. Icon references now use the canonical opaque PNG set and duplicate `-v401`, `-v410`, and generic legacy icons were removed. The service-worker cache was bumped to `giglens-v42-giglens-audit-performance`.
+- **UI hierarchy needed a release-level pass:** the command center now has a deeper but quieter surface system, clearer active navigation, platform-color rails and pills in History, explicit automatic/custom tax controls, responsive hover treatment, mobile refinements, and `content-visibility` hints for long History/Analytics pages.
+
+### Security review
+
+- No backend, framework, build system, account service, analytics tracker, or new remote endpoint was added.
+- Runtime files were scanned for common API keys, GitHub tokens, cloud credentials, payment secrets, webhooks, private-key blocks, and `.env` material; none were detected.
+- The existing restrictive CSP, no-referrer policy, pinned Tesseract.js loader with SRI, same-origin service-worker cache rules, escaped dynamic text, normalized imports, and local-only storage model remain in place.
+- A public static repository cannot prevent a compromised GitHub maintainer account or malicious repository change. Branch protection, two-factor authentication, least-privilege Pages permissions, and pull-request review remain required operational controls.
+
+### Data migration and compatibility
+
+- Data schema: `15`; backup schema: `16`.
+- Existing `giglens.*` and legacy `driveledger.*` local storage migration remains non-destructive.
+- Existing custom mileage rates are preserved as custom. The exact old app defaults migrate to automatic date-aware mode.
+- Delivery, decision, OCR-learning, shift-history, import/merge/replace, rollback, emergency restore, CSV, and JSON backup paths remain supported.
+
+### Files changed
+
+`index.html`, `styles.css`, `app.js`, `manifest.json`, `service-worker.js`, `package.json`, `tests/test_static_app.py`, `tools/smoke-startup.js`, `README.md`, `AUDIT_REPORT.md`, `CHANGELOG.md`, `DEPLOYMENT.md`, `SECURITY_AUDIT.md`, `OCR_LEARNING_AUDIT.md`, and `PLATFORM_DETECTION_AUDIT.md`.
+
+Removed duplicate icon files: versioned `-v401`/`-v410` copies, old `icons/icon-192.png` / `icons/icon-512.png`, `apple-touch-icon-v410.png`, and `favicon-v410.png`. Canonical icon files remain unchanged.
+
+### Automated verification
+
+- `node --check app.js`, `service-worker.js`, and `404.js`: passed.
+- `node tools/smoke-startup.js`: passed, including OCR lifecycle, conservative color evidence, generic-learning isolation, merchant/store cases, date-aware tax CSV, pause migration, overlapping-break union, history pagination, imports/exports, PWA caching, and secret scanning.
+- `python -m unittest discover -s tests -v`: `42/42` passed, including static asset, visible-button wiring, CSP/PWA, migration, icon, release metadata, and executable smoke coverage.
+- Supplied screenshot calibration: Uber image `10.22%` qualifying green with effectively no competing accent; DoorDash image `8.84%` qualifying red with negligible competition.
+- In-app browser QA: desktop and 390×844 responsive layouts passed; no horizontal overflow; five visible mobile nav items; no mobile dock; Quick Add open/close passed; Start/Pause/Resume/End passed; automatic/custom tax control state passed; canonical manifest/icon metadata passed; browser console errors: none.
+- Local HTTP verification: `10/10` requested shell, manifest, service-worker, script, stylesheet, and canonical icon paths returned `200`.
+
+### Remaining risks
+
+- OCR is heuristic and gig apps can change their layouts. A cropped, compressed, dark-mode, or low-text screenshot may intentionally remain `Other`; every detected field must still be reviewed before saving.
+- Accent colors are supporting evidence, not logos. Red/green/orange selection requires offer-like OCR text, but unusual app themes can still reduce confidence.
+- `localStorage` is origin- and browser-specific and can be cleared by the user or OS. Regular JSON backups remain essential.
+- Tesseract worker/core/language files are public pinned remote dependencies and require a network connection on first use; ordinary tracking remains available offline.
+- Automatic mileage rates cover the bundled 2024–2026 schedule. Future-year rates require a release update or custom mode, and eligibility is outside the app's scope.
+- Real iPhone Home Screen installation, Safari Share Sheet export, camera/file-picker behavior, WebAssembly OCR speed, and GitHub Pages cache activation still require device-level confirmation after deployment.
+
+### Manual QA checklist
+
+1. Export a JSON backup, deploy all release files together, reload once, then close/reopen the installed PWA.
+2. Confirm the GigLens icon appears in Safari and on a newly added iPhone Home Screen shortcut. Remove/re-add an old shortcut if iOS retains cached artwork.
+3. Start Day, Pause, wait briefly, Resume, and End Day; confirm paused time is excluded and the recap is saved.
+4. Scan clear DoorDash, Uber Eats, Grubhub, Spark, Amazon Flex, Instacart, and Roadie examples. Confirm strong text wins conflicts, blue does not guess Spark/Amazon, and all fields remain editable.
+5. Correct a platform once, then scan a similar screenshot from that app and an unrelated generic offer. Confirm only the distinctive app workflow receives the learned label.
+6. Scan restaurant and retail orders, including an unfamiliar taqueria and grocery store; confirm the real merchant name remains editable and History uses Restaurant/Store/Merchant appropriately.
+7. Save deliveries dated in both halves of 2026 through import, export Tax CSV, and verify 0.725/0.76 rates appear on the correct rows.
+8. Create more than 30 delivery days or import a test backup; confirm Show Older History expands the list and analytics/exports still include all records.
+9. Test manual entry, Quick Add, calculator decision logging, edit, duplicate, delete/undo, CSV exports, backup import merge/replace, and emergency rollback.
+10. Load once online, switch to Airplane Mode, and confirm the app shell and local features reopen. OCR may need connectivity if its remote files were not already available.
+
+## 4.1.1 merchant/store data-path audit
+The baseline v4.1.0 syntax, smoke, and 40-test suite passed. A deeper code audit found that `merchantType` was calculated during OCR but omitted by `normalizeDelivery()`, so saved/imported records lost their restaurant/store classification. History also hardcoded all merchants as restaurants, and Walmart could be rejected as a merchant because the same word supports Spark platform detection. These issues are repaired and covered by new executable regression cases.
+
+### Verification
+
+- `npm run syntax`: passed.
+- `npm run smoke`: passed, including Schnucks, Walmart, and Best Buy store OCR cases.
+- `python -m unittest discover -s tests -v`: 41 tests passed.
+- Local static-server asset checks returned HTTP 200 for the app shell, manifest, service worker, icons, and fallback script.
+- Secret scan found no API keys, passwords, private keys, authentication tokens, or `.env` credentials.
+
 ## 4.1.0 OCR learning, embedded icon, and mobile layout audit
 
 User testing showed three concrete defects: the in-app brand icon rendered as a broken image, the screenshot correction process did not improve future recognition, and the mobile Today screen was cramped by duplicate fixed actions and six bottom tabs.
@@ -15,6 +92,62 @@ User testing showed three concrete defects: the in-app brand icon rendered as a 
 ### Verification
 
 The executable browser-mock suite covers correction capture, similar-screenshot reuse, learning status, and reset. Static tests cover the embedded logo, storage key, learning functions, mobile dock removal, five-item navigation, icon files, PWA metadata, and existing feature wiring.
+
+## GigLens 4.1.2 Stability Audit and Repair
+
+Scope: full review of the uploaded `GigLens_v4_1_1_Audit_Merchant_Type_Repair(1).zip` as the source of truth. The audit covered JavaScript syntax, executable smoke behavior, Python static/regression tests, OCR lifecycle handling, shift/break calculations, profit and tax defaults, PWA assets, GitHub Pages paths, local-data migrations, import/export safety, public-secret exposure, mobile layout rules, and release documentation.
+
+### Confirmed defects repaired
+
+- **Paused time was not actually excluded from hourly calculations.** `getWorkWindow()` calculated break milliseconds, but `ProfitEngine.summarizeRows()` used the raw start/end duration and ignored the break value. The Profit Engine now consumes explicit active milliseconds after subtracting overlapping breaks.
+- **Multiple shifts on the same day produced misleading hourly averages.** Starting a later shift replaced the top-level start time while Today still included all daily earnings. Shift history now stores per-shift breaks and active hours, and Today combines each same-day active interval without double counting.
+- **End-shift recaps could include deliveries outside that shift.** Recaps now select records between that shift's start and end and use the shift's own active duration.
+- **OCR cleanup could defeat the visible timeout.** Recognition had a timeout, but the `finally` block awaited `worker.terminate()` without a bound. Cleanup now has its own three-second ceiling.
+- **Older OCR results could overwrite newer screenshots.** Full and Quick scanners now use generation guards and ignore stale progress/results after another image is selected or a scan is cleared.
+- **Normal app startup waited on a third-party OCR script.** Tesseract.js is now loaded on demand with pinned version, integrity metadata, progress, retry, and timeout handling. Manual tracking remains available when OCR cannot load.
+- **Screenshot inputs had no practical size guard.** Non-image files and images over 20 MB now fail clearly before OCR work begins.
+- **Manual Add rejected zero miles while Quick Add and OCR review accepted it.** All entry paths now consistently accept an explicit `0` to represent mileage not yet available while still rejecting a blank or negative value.
+- **Decision CSV export called a nonexistent helper.** Tapping the export button raised a `ReferenceError` because `downloadFile()` was no longer defined. It now uses the tested Share Sheet/download helper and reports empty-ledger exports clearly.
+- **The default mileage deduction rate was stale.** The default moved from the 2024 value of `0.67` to the 2026 U.S. business rate of `0.725`; the exact old default migrates while other custom values remain unchanged. Three-decimal rate precision is preserved.
+- **Deployment documentation contradicted the GitHub-only project direction.** Obsolete Netlify files and instructions were removed, and `DEPLOYMENT.md` now covers GitHub Pages root publishing and iPhone/iPad installation.
+
+### Preserved behavior
+
+- Existing `giglens.*` and legacy `driveledger.*` local-storage migration paths remain intact.
+- OCR correction learning still stores compact local patterns rather than screenshot pixels.
+- Restaurant/store/merchant classification, strict platform evidence, manual entry, Quick Add, history editing, calculator decisions, analytics, zones, backups, rollback restore, PWA icons, and offline app-shell behavior remain present.
+- The project remains a static GitHub Pages PWA with no backend, account, API secret, framework, or build dependency.
+
+### Verification
+
+Run before packaging:
+
+```text
+npm run syntax
+npm run smoke
+npm test
+```
+
+The smoke suite now includes executable cases for break-adjusted active time, multiple same-day shifts, zero-mile manual entry, bounded OCR cleanup, stale concurrent scan ordering, merchant/store detection, local correction learning, import/rollback, exports, decision logic, mobile/PWA behavior, and secret scanning.
+
+Final result:
+
+```text
+npm run syntax: passed
+npm run smoke: passed
+npm test: 41 tests passed
+ESLint no-undef / unreachable / duplicate-key checks: passed for app.js, service-worker.js, and 404.js
+Local HTTP asset verification: 9/9 requested app-shell/icon paths returned 200
+Tesseract.js 5.1.1 loader SHA-384: matched the pinned integrity value
+Public secret scan: passed
+```
+
+### Remaining device-level checks
+
+- A real iPhone/iPad Safari session is still required to confirm the hosted GitHub Pages deployment, Home Screen artwork refresh, iOS file picker behavior, WebAssembly OCR performance, Share Sheet export, safe-area layout, and offline reopening.
+- iOS may retain an old Home Screen icon until the old shortcut is removed and GigLens is added again from Safari.
+- OCR accuracy remains dependent on screenshot quality and changing delivery-app layouts; the editable review and local correction-memory paths remain required safeguards.
+- Browser-local data can be removed by clearing site data or changing the hosted origin, so JSON backups remain important.
 
 # GigLens Audit Report
 

@@ -1,41 +1,43 @@
-# DriveLedger Public Exposure / Secret Scan
-
-Build audited: DriveLedger v3.7.3 Claude package repair / public security audit
+# GigLens 4.2.0 Public Exposure Audit
 
 ## Result
 
-No API keys, passwords, private keys, bearer tokens, GitHub tokens, OpenAI keys, AWS keys, Google API keys, Stripe keys, SendGrid keys, Slack tokens, Discord webhooks, JWT-like tokens, or `.env` files were found in the release package.
+The release contains no detected API keys, passwords, private keys, bearer tokens, GitHub tokens, payment secrets, webhooks, `.env` files, backend endpoints, analytics trackers, or account credentials.
 
-## External endpoint found
+GigLens is safe to publish as a static GitHub Pages repository from a secrets-exposure standpoint.
 
-The public runtime uses one third-party script:
+The 4.2 audit also removed redundant icon copies and dead rendered mobile-dock markup, re-ran the public-secret scan across runtime/package documents, and preserved the existing CSP, SRI-pinned OCR loader, no-referrer policy, same-origin cache boundary, escaped dynamic text, and normalized import path. No code audit can guarantee that a future malicious commit or compromised GitHub account cannot alter a public static site; repository access controls remain part of the security boundary.
 
-- `https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js`
+## Runtime network use
 
-This is used for browser-side OCR loading. No private API key is attached to it.
+The screenshot scanner loads pinned browser-side OCR components from these public locations when the user starts a scan:
 
-## Public exposure status
+- `https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/`
+- `https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0/`
+- `https://tessdata.projectnaptha.com/4.0.0/`
 
-This app is safe to publish as a static GitHub Pages or Netlify app from a secrets standpoint.
+The main Tesseract.js loader uses a fixed version and SHA-384 Subresource Integrity value. No private credential is attached to these requests. Normal app startup, manual tracking, history, analytics, and exports do not depend on the OCR download.
 
-Important operational notes:
+## Local data boundary
 
-- DriveLedger has no backend account system.
-- User data is stored in the visitor's browser `localStorage`.
-- Visitors to the public URL do not see your personal local data.
-- Anyone with physical/browser access to your device could see your local DriveLedger data.
-- Users should export JSON backups before clearing browser/site data.
-- Do not add private API keys to `app.js`, `index.html`, or any public static file in the future.
+- Deliveries, settings, shifts, decision records, backups, and scanner corrections are stored in browser `localStorage` under `giglens.*` keys.
+- Uploaded screenshot pixels are not stored in the scanner-learning profile.
+- OCR text can be retained with a saved scanned delivery and included in a user-created JSON backup.
+- Visitors to the public GitHub Pages URL cannot see another user's browser-local records.
+- Someone with access to the unlocked device or browser profile may be able to view local GigLens data.
 
-## Future hardening recommendations
+## Browser protections
 
-Before a broader public release, consider:
+- The main page includes a restrictive Content Security Policy and no-referrer policy.
+- The OCR loader and worker sources are limited to the documented pinned hosts.
+- Dynamic HTML that contains saved user text is escaped before rendering.
+- Imported records are normalized and bounded before use.
+- Service-worker caching is restricted to same-origin app assets.
 
-1. Self-hosting the OCR library instead of loading it from a CDN.
-2. Adding Subresource Integrity if continuing to use a CDN.
-3. Adding a Content Security Policy.
-4. Keeping all future private service credentials on a backend only, never in the frontend.
+## Operational guidance
 
-## 4.1 local OCR learning privacy note
-
-The correction-learning store contains normalized field corrections, a one-way OCR text signature, and a limited set of workflow tokens. It does not store uploaded image files or screenshot pixels. The store remains in browser `localStorage`, is included in user-initiated JSON backups, and can be reset independently in Settings.
+- Keep GitHub two-factor authentication enabled.
+- Protect the publishing branch and review dependency or workflow changes.
+- Never place private API keys in `app.js`, `index.html`, repository settings files, or any other public static asset.
+- Remove names, addresses, and order details before sharing screenshots in public issues.
+- Export JSON backups regularly because browser data can be cleared locally.

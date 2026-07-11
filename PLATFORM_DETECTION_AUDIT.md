@@ -1,5 +1,19 @@
 # GigLens Platform Detection Audit
 
+## v4.2.0 conservative visual evidence and learning isolation
+
+The v4.1.2 scan path retained text fingerprints but no longer passed screenshot-pixel evidence into OCR parsing. Version 4.2 restores lower-screen accent sampling in parallel with both Quick Scan and full scan, with stricter gates than a color-only classifier:
+
+- green may support Uber Eats, red DoorDash, and orange Grubhub only when OCR also contains an offer workflow plus a pay/distance/time signal;
+- blue never selects Spark or Amazon Flex by itself and only reinforces one of those apps after distinctive text identifies it;
+- a strong app-specific text fingerprint is not overridden by a conflicting accent;
+- weak, non-offer, or non-dominant color evidence is ignored;
+- all output remains editable and no screenshot is saved automatically.
+
+The local correction engine was also audited. Similar records previously could transfer a corrected platform from generic shared terms. Version 4.2 requires at least one shared platform-distinctive token, while exact reviewed screenshot signatures continue to reuse the driver's saved correction.
+
+Executable cases cover green-assisted weak Uber text, strong DoorDash text versus conflicting green, ambiguous blue remaining `Other`, generic correction non-transfer, and distinctive Uber correction reuse.
+
 ## v4.0.0 visual + workflow evidence audit
 
 The supplied screenshots were used as concrete layout references. The lower 55% pixel sampler measured the marked Uber Eats image at `9.92%` qualifying green pixels with no competing qualifying red/orange/blue pixels, and the marked DoorDash image at `9.58%` qualifying red pixels with no competing qualifying green/orange/blue pixels.

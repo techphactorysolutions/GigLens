@@ -1,4 +1,4 @@
-# Claude ZIP Review / Repair Notes
+# Historical Claude ZIP Review / Repair Notes
 
 Input reviewed: `driveledger-fixed.zip`
 
@@ -32,5 +32,4 @@ No functional app improvement was detected in Claude's ZIP compared with v3.7.2.
 
 ## Repair
 
-This package restores the missing release/test/deployment files and keeps the security-audited runtime package intact.
-
+The older repair restored the missing release/test/deployment files. Current GigLens releases retain the tests and tools but use GitHub Pages directly, so the historical Netlify `_redirects` file is no longer part of the active package.

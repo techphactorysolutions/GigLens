@@ -14,12 +14,23 @@
     [ROLLBACK_KEY]: "driveledger.rollback.v1",
     [LAST_BACKUP_KEY]: "driveledger.lastBackup.v1"
   };
-  const DATA_VERSION = 13;
-  const BACKUP_VERSION = 14;
+  const DATA_VERSION = 15;
+  const BACKUP_VERSION = 16;
   const OCR_LEARNING_VERSION = 1;
   const OCR_LEARNING_LIMIT = 120;
   const OCR_INIT_TIMEOUT_MS = 20000;
   const OCR_RECOGNIZE_TIMEOUT_MS = 45000;
+  const OCR_TERMINATE_TIMEOUT_MS = 3000;
+  const OCR_LIBRARY_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+  const OCR_LIBRARY_INTEGRITY = "sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F";
+  const MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024;
+  const HISTORY_PAGE_DAYS = 30;
+  const STANDARD_MILEAGE_RATES = Object.freeze([
+    { start: "2026-07-01", end: "2026-12-31", rate: 0.76 },
+    { start: "2026-01-01", end: "2026-06-30", rate: 0.725 },
+    { start: "2025-01-01", end: "2025-12-31", rate: 0.70 },
+    { start: "2024-01-01", end: "2024-12-31", rate: 0.67 }
+  ]);
 
   function migrateLegacyStorage() {
     for (const [nextKey, legacyKey] of Object.entries(LEGACY_KEYS)) {
@@ -59,6 +70,16 @@
     "pay", "payout", "earnings", "restaurant", "store", "merchant", "items", "route", "curbside", "round",
     "robin", "red", "card", "peak", "request", "supplement", "partner", "shop", "replacement", "same", "day"
   ]);
+  const OCR_PLATFORM_DISTINCTIVE_TOKENS = Object.freeze({
+    "DoorDash": new Set(["doordash", "dasher", "dash", "red", "card", "peak"]),
+    "Uber Eats": new Set(["uber", "eats", "trip", "radar", "exclusive", "supplement", "partner"]),
+    "Grubhub": new Set(["grubhub", "diner"]),
+    "Instacart": new Set(["instacart", "shopper", "batch", "replacement"]),
+    "Amazon Flex": new Set(["amazon", "flex"]),
+    "Spark": new Set(["spark", "walmart", "curbside", "robin"]),
+    "Roadie": new Set(["roadie"]),
+    "Catering": new Set(["ezcater", "catering"])
+  });
   const weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
   const defaultSettings = {
@@ -69,7 +90,8 @@
     gasPrice: 3.5,
     vehicleMpg: 25,
     maintenanceCostPerMile: 0.12,
-    mileageDeductionRate: 0.67,
+    mileageDeductionMode: "automatic",
+    mileageDeductionRate: 0.76,
     minimumDollarPerMile: 1.5,
     minimumDollarPerHour: 20,
     minimumPayout: 7,
@@ -92,6 +114,10 @@
   let lastDeleted = null;
   let pendingImport = null;
   let toastAction = null;
+  let ocrLibraryPromise = null;
+  let quickScanGeneration = 0;
+  let fullScanGeneration = 0;
+  let historyDayLimit = HISTORY_PAGE_DAYS;
 
   const els = {
     todayHero: $("todayHero"),
@@ -176,7 +202,9 @@
     gasPriceInput: $("gasPriceInput"),
     mpgInput: $("mpgInput"),
     maintenanceInput: $("maintenanceInput"),
+    taxRateModeInput: $("taxRateModeInput"),
     taxRateInput: $("taxRateInput"),
+    taxRateHelp: $("taxRateHelp"),
     minPerMileInput: $("minPerMileInput"),
     minPerHourInput: $("minPerHourInput"),
     minPayoutInput: $("minPayoutInput"),
@@ -365,6 +393,13 @@
     return shared / (a.size + b.size - shared);
   }
 
+  function hasSharedPlatformEvidence(left, right, platform) {
+    const distinctive = OCR_PLATFORM_DISTINCTIVE_TOKENS[platform];
+    if (!distinctive) return false;
+    const rightTokens = new Set(right || []);
+    return (left || []).some((token) => distinctive.has(token) && rightTokens.has(token));
+  }
+
   function normalizeCorrectionSide(value = {}) {
     const platform = allowedCompanies.has(value.platform || value.company) ? (value.platform || value.company) : "Other";
     return {
@@ -516,9 +551,12 @@
     for (const correction of ocrLearning.corrections.slice(-80)) {
       const similarity = tokenSimilarity(fingerprint, correction.fingerprint);
       const shared = sharedTokenCount(fingerprint, correction.fingerprint);
-      if (similarity < 0.42 || shared < 2) continue;
       const platform = correction.corrected.platform;
       if (!platform || platform === "Other") continue;
+      // Never transfer a platform correction from generic words such as
+      // "delivery", "pickup", or "accept". At least one app-specific token
+      // must be present in both screenshots; exact screenshots are handled above.
+      if (similarity < 0.42 || shared < 2 || !hasSharedPlatformEvidence(fingerprint, correction.fingerprint, platform)) continue;
       const correctedPlatformBefore = correction.changedFields.includes("platform");
       const weight = similarity * (1 + Math.min(correction.confirmations, 5) * 0.12) + (correctedPlatformBefore ? 0.35 : 0);
       const current = votes.get(platform) || { score: 0, supporters: 0, bestSimilarity: 0, correctedPlatformBefore: false };
@@ -594,6 +632,14 @@
     toast("Scanner learning reset. Saved deliveries were kept.");
   }
 
+  function normalizeMerchantTypeValue(value, merchant = "", context = "") {
+    if (["restaurant", "store", "merchant"].includes(value)) return value;
+    const source = `${merchant || ""} ${context || ""}`;
+    if (/\b(?:walmart|sam'?s\s*club|schnucks|target|best\s*buy|costco|walgreens|cvs|home\s*depot|lowe'?s|aldi|kroger|publix|meijer|dollar\s*(?:general|tree)|petsmart|petco|sephora|ups\s*store|instacart|spark|amazon\s*flex|store|grocery|market|pharmacy|retail|curbside|items?\s+to\s+shop)\b/i.test(source)) return "store";
+    if (/\b(?:mcdonald'?s|taco\s*bell|chick[-\s]*fil[-\s]*a|chipotle|starbucks|subway|panera|wendy'?s|burger\s*king|popeyes|restaurant|cafe|café|grill|kitchen|diner|pizza|taco|burger|chicken|sushi|bakery)\b/i.test(source)) return "restaurant";
+    return "merchant";
+  }
+
   function normalizeDeliveries(value) {
     if (!Array.isArray(value)) return [];
     return value.map((item) => normalizeDelivery(item)).filter(Boolean);
@@ -615,6 +661,7 @@
     const minutesRaw = num(item.minutes);
     const merchant = cleanText(item.merchant ?? item.restaurant ?? item.store ?? "", 120);
     const notes = cleanText(item.notes ?? item.note ?? "", 500);
+    const merchantType = normalizeMerchantTypeValue(item.merchantType, merchant, `${company} ${item.ocrText || ""} ${notes}`);
     const inferredSource = item.ocrText ? "ocr" : "manual";
     const source = validSources.has(item.source) ? item.source : inferredSource;
     const normalized = {
@@ -627,6 +674,7 @@
       zone: cleanText(item.zone || "", 80),
       merchant,
       restaurant: merchant,
+      merchantType,
       note: notes,
       notes,
       source,
@@ -645,7 +693,18 @@
     const raw = value && typeof value === "object" ? value : {};
     const vehicleMpg = bounded(raw.vehicleMpg ?? raw.mpg, 1, 200, defaultSettings.vehicleMpg, 1);
     const maintenanceCostPerMile = bounded(raw.maintenanceCostPerMile ?? raw.maintenancePerMile, 0, 10, defaultSettings.maintenanceCostPerMile, 2);
-    const mileageDeductionRate = bounded(raw.mileageDeductionRate ?? raw.taxMileageRate, 0, 10, defaultSettings.mileageDeductionRate, 2);
+    const rawMileageRate = raw.mileageDeductionRate ?? raw.taxMileageRate;
+    const previousVersion = Number(raw.appDataVersion || 0);
+    const previousRate = num(rawMileageRate);
+    const wasKnownAppDefault = rawMileageRate === undefined || rawMileageRate === null
+      || (previousVersion <= 14 && Math.abs(previousRate - 0.725) < 0.0001)
+      || (previousVersion < 14 && Math.abs(previousRate - 0.67) < 0.0001);
+    const mileageDeductionMode = ["automatic", "custom"].includes(raw.mileageDeductionMode)
+      ? raw.mileageDeductionMode
+      : (wasKnownAppDefault ? "automatic" : "custom");
+    const mileageDeductionRate = mileageDeductionMode === "automatic"
+      ? defaultSettings.mileageDeductionRate
+      : bounded(rawMileageRate, 0, 10, defaultSettings.mileageDeductionRate, 3);
     const minimumDollarPerMile = bounded(raw.minimumDollarPerMile ?? raw.minPerMile, 0, 50, defaultSettings.minimumDollarPerMile, 2);
     const minimumDollarPerHour = bounded(raw.minimumDollarPerHour ?? raw.minPerHour, 0, 500, defaultSettings.minimumDollarPerHour, 2);
     const normalized = {
@@ -656,6 +715,7 @@
       gasPrice: bounded(raw.gasPrice, 0, 20, defaultSettings.gasPrice, 2),
       vehicleMpg,
       maintenanceCostPerMile,
+      mileageDeductionMode,
       mileageDeductionRate,
       minimumDollarPerMile,
       minimumDollarPerHour,
@@ -707,7 +767,7 @@
     };
     add(settings.defaultZone);
     (settings.customZones || []).forEach(add);
-    activeDeliveries().forEach((delivery) => add(delivery.zone));
+    deliveries.forEach((delivery) => { if (!delivery.deleted) add(delivery.zone); });
     return zones.sort((a, b) => a.localeCompare(b));
   }
 
@@ -736,29 +796,60 @@
     return Array.isArray(value) ? value.map(normalizeDecision).filter(Boolean).slice(-2000) : [];
   }
 
+  function normalizeBreaks(value) {
+    if (!Array.isArray(value)) return [];
+    const parsed = value.map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const start = item.startedAt && !Number.isNaN(new Date(item.startedAt).getTime()) ? new Date(item.startedAt).toISOString() : null;
+      const end = item.endedAt && !Number.isNaN(new Date(item.endedAt).getTime()) ? new Date(item.endedAt).toISOString() : null;
+      if (!start || (end && new Date(end) <= new Date(start))) return null;
+      return { startedAt: start, endedAt: end };
+    }).filter(Boolean).sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+
+    const merged = [];
+    for (const current of parsed) {
+      const previous = merged[merged.length - 1];
+      if (!previous) {
+        merged.push(current);
+        continue;
+      }
+      const previousEnd = previous.endedAt ? new Date(previous.endedAt).getTime() : Number.POSITIVE_INFINITY;
+      const currentStart = new Date(current.startedAt).getTime();
+      if (currentStart <= previousEnd) {
+        previous.endedAt = !previous.endedAt || !current.endedAt
+          ? null
+          : new Date(Math.max(new Date(previous.endedAt).getTime(), new Date(current.endedAt).getTime())).toISOString();
+      } else {
+        merged.push(current);
+      }
+    }
+    return merged.slice(-100);
+  }
+
   function normalizeShift(value) {
     const raw = value && typeof value === "object" ? value : {};
     const startedAt = raw.startedAt && !Number.isNaN(new Date(raw.startedAt).getTime()) ? new Date(raw.startedAt).toISOString() : null;
     const endedAt = raw.endedAt && !Number.isNaN(new Date(raw.endedAt).getTime()) ? new Date(raw.endedAt).toISOString() : null;
-    const pausedAt = raw.pausedAt && !Number.isNaN(new Date(raw.pausedAt).getTime()) ? new Date(raw.pausedAt).toISOString() : null;
-    const breaks = Array.isArray(raw.breaks) ? raw.breaks.map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const start = item.startedAt && !Number.isNaN(new Date(item.startedAt).getTime()) ? new Date(item.startedAt).toISOString() : null;
-      const end = item.endedAt && !Number.isNaN(new Date(item.endedAt).getTime()) ? new Date(item.endedAt).toISOString() : null;
-      return start ? { startedAt: start, endedAt: end } : null;
-    }).filter(Boolean).slice(-100) : [];
+    let pausedAt = raw.pausedAt && !Number.isNaN(new Date(raw.pausedAt).getTime()) ? new Date(raw.pausedAt).toISOString() : null;
+    let breaks = normalizeBreaks(raw.breaks);
     const active = Boolean(raw.active && startedAt);
-    const paused = Boolean(active && raw.paused && (pausedAt || breaks.some((item) => !item.endedAt)));
+    const openBreak = breaks.find((item) => !item.endedAt);
+    const paused = Boolean(active && (raw.paused || pausedAt || openBreak));
+    if (paused) {
+      pausedAt = openBreak?.startedAt || pausedAt || new Date().toISOString();
+      if (new Date(pausedAt) < new Date(startedAt)) pausedAt = startedAt;
+      if (!openBreak) breaks = normalizeBreaks([...breaks, { startedAt: pausedAt, endedAt: null }]);
+    }
     const shiftHistory = Array.isArray(raw.shiftHistory)
       ? raw.shiftHistory.map((item) => normalizeShiftHistoryItem(item)).filter(Boolean).slice(-100)
       : [];
     return {
       active,
       paused,
-      pausedAt: paused ? (pausedAt || new Date().toISOString()) : null,
+      pausedAt: paused ? pausedAt : null,
       breaks,
       startedAt,
-      endedAt,
+      endedAt: active ? null : endedAt,
       lastSummary: cleanText(raw.lastSummary || "", 1000),
       shiftHistory,
       appDataVersion: DATA_VERSION
@@ -787,6 +878,8 @@
       id: String(item.id || makeId()),
       startedAt,
       endedAt,
+      breaks: normalizeBreaks(item.breaks),
+      activeHours: bounded(item.activeHours, 0, 48, 0, 3),
       summary: cleanText(item.summary || "", 2000),
       recommendation: cleanText(item.recommendation || "", 500),
       metrics,
@@ -814,7 +907,9 @@
     if (!raw || !/[0-9]/.test(raw)) return fallback;
     const parsed = num(raw);
     if (!Number.isFinite(parsed) || parsed < min || parsed > max) return fallback;
-    return decimals === 1 ? round1(parsed) : round2(parsed);
+    const precision = Math.max(0, Math.min(6, Math.round(decimals)));
+    const factor = 10 ** precision;
+    return Math.round((parsed + Number.EPSILON) * factor) / factor;
   }
 
   function todayKey(date = new Date()) {
@@ -853,34 +948,91 @@
       .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   }
 
-  function breakMilliseconds(start, end) {
-    if (!shift?.breaks?.length) return 0;
-    const rangeStart = start.getTime();
-    const rangeEnd = end.getTime();
-    return shift.breaks.reduce((total, item) => {
-      const breakStart = new Date(item.startedAt).getTime();
-      const breakEnd = item.endedAt ? new Date(item.endedAt).getTime() : (shift.paused ? Date.now() : breakStart);
-      if (!Number.isFinite(breakStart) || !Number.isFinite(breakEnd)) return total;
-      return total + Math.max(0, Math.min(rangeEnd, breakEnd) - Math.max(rangeStart, breakStart));
+  function localDayBounds(date = new Date()) {
+    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return { start, end };
+  }
+
+  function intervalOverlapMilliseconds(start, end, rangeStart, rangeEnd) {
+    const startMs = new Date(start).getTime();
+    const endMs = new Date(end).getTime();
+    const rangeStartMs = new Date(rangeStart).getTime();
+    const rangeEndMs = new Date(rangeEnd).getTime();
+    if (![startMs, endMs, rangeStartMs, rangeEndMs].every(Number.isFinite)) return 0;
+    return Math.max(0, Math.min(endMs, rangeEndMs) - Math.max(startMs, rangeStartMs));
+  }
+
+  function breakMilliseconds(start, end, breaks = shift?.breaks || [], openBreakEnd = new Date()) {
+    if (!Array.isArray(breaks) || !breaks.length) return 0;
+    return breaks.reduce((total, item) => {
+      if (!item?.startedAt) return total;
+      const breakEnd = item.endedAt || openBreakEnd;
+      return total + intervalOverlapMilliseconds(item.startedAt, breakEnd, start, end);
     }, 0);
   }
 
-  function getWorkWindow(todays) {
-    let start = null;
-    if (shift.startedAt && isToday(shift.startedAt)) start = new Date(shift.startedAt);
-    else if (todays.length) start = new Date(todays[0].createdAt);
-    if (!start) return null;
+  function activeShiftMilliseconds(start, end, breaks = [], rangeStart = start, rangeEnd = end) {
+    const elapsed = intervalOverlapMilliseconds(start, end, rangeStart, rangeEnd);
+    if (!elapsed) return 0;
+    const overlapStart = new Date(Math.max(new Date(start).getTime(), new Date(rangeStart).getTime()));
+    const overlapEnd = new Date(Math.min(new Date(end).getTime(), new Date(rangeEnd).getTime()));
+    return Math.max(0, elapsed - breakMilliseconds(overlapStart, overlapEnd, breaks, end));
+  }
 
-    let end = new Date();
-    if (!shift.active && shift.endedAt && isToday(shift.endedAt)) {
-      const ended = new Date(shift.endedAt);
-      if (ended > start) end = ended;
+  function historyActiveMillisecondsForDay(item, dayStart, dayEnd) {
+    if (!item?.startedAt || !item?.endedAt) return 0;
+    const startsAndEndsToday = todayKey(new Date(item.startedAt)) === todayKey(dayStart)
+      && todayKey(new Date(item.endedAt)) === todayKey(dayStart);
+    if (startsAndEndsToday && num(item.activeHours) > 0) return num(item.activeHours) * 36e5;
+    return activeShiftMilliseconds(item.startedAt, item.endedAt, item.breaks || [], dayStart, dayEnd);
+  }
+
+  function getWorkWindow(todays) {
+    const now = new Date();
+    const { start: dayStart, end: nextDay } = localDayBounds(now);
+    const dayEnd = now < nextDay ? now : nextDay;
+    const history = Array.isArray(shift.shiftHistory) ? shift.shiftHistory : [];
+    let activeMilliseconds = history.reduce(
+      (total, item) => total + historyActiveMillisecondsForDay(item, dayStart, dayEnd),
+      0
+    );
+
+    if (shift.active && shift.startedAt) {
+      activeMilliseconds += activeShiftMilliseconds(
+        shift.startedAt,
+        now,
+        shift.breaks || [],
+        dayStart,
+        dayEnd
+      );
+    } else if (shift.startedAt && shift.endedAt) {
+      const alreadyInHistory = history.some((item) => item.startedAt === shift.startedAt && item.endedAt === shift.endedAt);
+      if (!alreadyInHistory) {
+        activeMilliseconds += activeShiftMilliseconds(
+          shift.startedAt,
+          shift.endedAt,
+          shift.breaks || [],
+          dayStart,
+          dayEnd
+        );
+      }
     }
-    if (todays.length) {
-      const lastDelivery = new Date(todays[todays.length - 1].createdAt);
-      if (lastDelivery > end) end = lastDelivery;
+
+    if (activeMilliseconds > 0) {
+      return { start: dayStart, end: dayEnd, activeMilliseconds, breakMilliseconds: 0 };
     }
-    return { start, end, breakMilliseconds: breakMilliseconds(start, end) };
+
+    const trackedMinutes = todays.reduce((total, delivery) => total + Math.max(0, num(delivery.minutes)), 0);
+    if (trackedMinutes > 0) return null;
+    if (todays.length >= 2) {
+      const start = new Date(todays[0].createdAt);
+      const end = new Date(todays[todays.length - 1].createdAt);
+      const fallbackMilliseconds = Math.max(0, end - start);
+      if (fallbackMilliseconds > 0) return { start, end, activeMilliseconds: fallbackMilliseconds, breakMilliseconds: 0 };
+    }
+    return null;
   }
 
   const ProfitEngine = {
@@ -931,9 +1083,31 @@
     profitHourlyRate(profit, minutes) {
       return this.grossHourlyRate(profit, minutes);
     },
-    mileageDeduction(miles, config = settings) {
-      const rate = this.positive(config.mileageDeductionRate ?? config.taxMileageRate, defaultSettings.mileageDeductionRate);
+    mileageRateForDate(value = new Date(), config = settings) {
+      const configuredRate = this.positive(config.mileageDeductionRate ?? config.taxMileageRate, defaultSettings.mileageDeductionRate);
+      if (config.mileageDeductionMode !== "automatic") return configuredRate;
+      const rawDate = value && typeof value === "object" && !(value instanceof Date)
+        ? (value.date || value.createdAt || value.updatedAt)
+        : value;
+      const directKey = typeof rawDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawDate.trim())
+        ? rawDate.trim()
+        : "";
+      const parsedDate = directKey ? null : new Date(rawDate || new Date());
+      const dateKey = directKey || (!Number.isNaN(parsedDate.getTime()) ? todayKey(parsedDate) : todayKey());
+      return STANDARD_MILEAGE_RATES.find((entry) => dateKey >= entry.start && dateKey <= entry.end)?.rate
+        ?? configuredRate;
+    },
+    mileageDeduction(miles, config = settings, date = new Date()) {
+      const rate = this.mileageRateForDate(date, config);
       return round2(this.positive(miles, 0) * rate);
+    },
+    mileageDeductionForRows(rows = [], config = settings) {
+      const safeRows = Array.isArray(rows) ? rows : [];
+      if (config.mileageDeductionMode !== "automatic") {
+        const miles = safeRows.reduce((sum, row) => sum + this.positive(row?.miles, 0), 0);
+        return this.mileageDeduction(miles, config);
+      }
+      return round2(safeRows.reduce((sum, row) => sum + this.mileageDeduction(row?.miles, config, row), 0));
     },
     projectedDailyEarnings(earnings, grossHourly, hours, active = shift.active) {
       const current = this.positive(earnings, 0);
@@ -997,12 +1171,17 @@
       const orders = safeRows.length;
       const expenses = this.vehicleCost(miles, config);
       const profit = round2(earnings - expenses);
-      const taxDeduction = this.mileageDeduction(miles, config);
+      const taxDeduction = this.mileageDeductionForRows(safeRows, config);
       const avgOrder = orders ? round2(earnings / orders) : 0;
       const avgMile = this.grossDollarPerMile(earnings, miles);
       const profitMile = this.estimatedProfitPerMile(profit, miles, config);
+      const workMilliseconds = workWindow
+        ? Math.max(0, Number.isFinite(workWindow.activeMilliseconds)
+          ? workWindow.activeMilliseconds
+          : (workWindow.end - workWindow.start) - this.positive(workWindow.breakMilliseconds, 0))
+        : 0;
       const hours = workWindow
-        ? Math.max((workWindow.end - workWindow.start) / 36e5, 1 / 60)
+        ? (workMilliseconds > 0 ? Math.max(workMilliseconds / 36e5, 1 / 60) : 0)
         : (minutes ? minutes / 60 : 0);
       const avgHour = hours ? round2(earnings / hours) : 0;
       const profitHour = hours ? round2(profit / hours) : 0;
@@ -1063,8 +1242,8 @@
     return ProfitEngine.profitHourlyRate(profit, minutes);
   }
 
-  function mileageDeduction(miles, config = settings) {
-    return ProfitEngine.mileageDeduction(miles, config);
+  function mileageDeduction(miles, config = settings, date = new Date()) {
+    return ProfitEngine.mileageDeduction(miles, config, date);
   }
 
   function projectedDailyEarnings(earnings, grossHourly, hours) {
@@ -1150,7 +1329,7 @@
     const goalEta = buildGoalEta(c, goal, remaining);
     const paceStatus = paceStatusLabel(c);
     const efficiencyStatus = efficiencyStatusLabel(c);
-    const taxRate = Number(settings.taxMileageRate || 0);
+    const taxRate = ProfitEngine.mileageRateForDate(new Date(), settings);
 
     els.profitToday.textContent = money.format(c.profit);
     els.profitHour.textContent = money.format(c.profitHour);
@@ -1170,7 +1349,7 @@
     setStatusClass(els.efficiencyCard, efficiencyStatus.kind);
 
     els.taxDeduction.textContent = money.format(c.taxDeduction);
-    els.taxRateLabel.textContent = `${money.format(taxRate)}/mi`;
+    els.taxRateLabel.textContent = `${formatMileageRate(taxRate)} · ${settings.mileageDeductionMode === "automatic" ? "Auto" : "Custom"}`;
     els.taxMiles.textContent = `${c.miles.toFixed(1)} mi`;
     els.vehicleCostToday.textContent = money.format(c.expenses);
     els.ordersCount.textContent = String(c.orders);
@@ -1271,8 +1450,8 @@
   }
 
   function shiftStatusText(hours) {
-    if (shift.active && shift.paused && shift.startedAt && isToday(shift.startedAt)) return `On break · ${formatHours(hours)} active`;
-    if (shift.active && shift.startedAt && isToday(shift.startedAt)) return `Shift active · ${formatHours(hours)}`;
+    if (shift.active && shift.paused && shift.startedAt) return `On break · ${formatHours(hours)} active today`;
+    if (shift.active && shift.startedAt) return `Shift active · ${formatHours(hours)} today`;
     if (shift.endedAt && isToday(shift.endedAt)) return `Shift ended · ${formatHours(hours)}`;
     return "No active shift";
   }
@@ -1287,6 +1466,11 @@
     const h = Math.floor(totalMinutes / 60);
     const m = totalMinutes % 60;
     return `${h}h ${String(m).padStart(2, "0")}m`;
+  }
+
+  function formatMileageRate(rate) {
+    const cents = Math.round(Math.max(0, num(rate)) * 1000) / 10;
+    return `${Number.isInteger(cents) ? cents.toFixed(0) : cents.toFixed(1)}¢/mi`;
   }
 
   function renderTrend(todays) {
@@ -1988,7 +2172,13 @@
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key).push(d);
     }
-    els.historyList.innerHTML = [...grouped.entries()].map(([dateKey, rows]) => renderHistoryDay(dateKey, rows)).join("");
+    const entries = [...grouped.entries()];
+    const visibleEntries = entries.slice(0, historyDayLimit);
+    const remainingDays = Math.max(0, entries.length - visibleEntries.length);
+    const loadMore = remainingDays
+      ? `<div class="history-load-more"><button class="secondary-btn full" data-history-more type="button">Show older history (${remainingDays} ${remainingDays === 1 ? "day" : "days"} remaining)</button></div>`
+      : "";
+    els.historyList.innerHTML = visibleEntries.map(([dateKey, rows]) => renderHistoryDay(dateKey, rows)).join("") + loadMore;
   }
 
   function renderHistoryDay(dateKey, rows) {
@@ -2020,6 +2210,12 @@
     return ProfitEngine.summarizeRows(rows, { config: settings, activeShift: false });
   }
 
+  function merchantTypeLabel(value) {
+    if (value === "store") return "Store";
+    if (value === "restaurant") return "Restaurant";
+    return "Merchant";
+  }
+
   function renderHistoryItem(d) {
     const earnings = Number(d.earnings || 0);
     const miles = Number(d.miles || 0);
@@ -2029,8 +2225,8 @@
     const date = new Date(d.createdAt).toLocaleString([], { hour: "numeric", minute: "2-digit" });
     const zoneLabel = d.zone || "Unassigned";
     return `
-      <article class="history-item" data-delivery-id="${escapeHTML(d.id)}">
-        <div class="history-top"><span>${escapeHTML(d.company)}</span><strong>${money.format(earnings)}</strong></div>
+      <article class="history-item platform-card ${platformClassName(d.company)}" data-delivery-id="${escapeHTML(d.id)}">
+        <div class="history-top"><span class="platform-pill">${escapeHTML(d.company)}</span><strong>${money.format(earnings)}</strong></div>
         <div class="history-detail-grid" aria-label="Delivery details">
           <span><strong>${miles.toFixed(1)}</strong><small>miles</small></span>
           <span><strong>${minutes ? `${minutes}m` : "—"}</strong><small>minutes</small></span>
@@ -2038,7 +2234,7 @@
           <span><strong>${money.format(profit)}</strong><small>profit</small></span>
         </div>
         <div class="history-meta">${date} · Zone: ${escapeHTML(zoneLabel)} · <span class="source-pill">${escapeHTML(sourceLabel(d.source))}</span></div>
-        ${d.merchant ? `<div class="history-meta merchant-meta">Restaurant: ${escapeHTML(d.merchant)}</div>` : ""}
+        ${d.merchant ? `<div class="history-meta merchant-meta">${merchantTypeLabel(d.merchantType)}: ${escapeHTML(d.merchant)}</div>` : ""}
         ${d.notes ? `<div class="history-meta">${escapeHTML(d.notes)}</div>` : ""}
         <div class="history-actions" aria-label="Delivery actions">
           <button class="mini-btn" data-edit="${escapeHTML(d.id)}" type="button">Edit</button>
@@ -2069,8 +2265,14 @@
       return;
     }
     els.customZoneList.className = "zone-list";
+    const deliveryCounts = new Map();
+    deliveries.forEach((delivery) => {
+      if (delivery.deleted) return;
+      const key = zoneKey(delivery.zone);
+      if (key) deliveryCounts.set(key, (deliveryCounts.get(key) || 0) + 1);
+    });
     els.customZoneList.innerHTML = zones.map((zone) => {
-      const matching = activeDeliveries().filter((delivery) => zoneKey(delivery.zone) === zoneKey(zone)).length;
+      const matching = deliveryCounts.get(zoneKey(zone)) || 0;
       return `
         <article class="zone-row">
           <div>
@@ -2237,6 +2439,10 @@
     return "Manual";
   }
 
+  function platformClassName(company) {
+    return `platform-${String(company || "other").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  }
+
   function dateLabel(dateKey) {
     if (dateKey === todayKey()) return "Today";
     const yesterday = new Date();
@@ -2262,6 +2468,22 @@
     ];
     for (const [input, value] of pairs) {
       if (document.activeElement !== input) input.value = value ?? "";
+    }
+    if (els.taxRateModeInput && document.activeElement !== els.taxRateModeInput) {
+      els.taxRateModeInput.value = settings.mileageDeductionMode;
+    }
+    renderTaxRateMode();
+  }
+
+  function renderTaxRateMode() {
+    if (!els.taxRateInput || !els.taxRateModeInput) return;
+    const automatic = els.taxRateModeInput.value === "automatic";
+    els.taxRateInput.disabled = automatic;
+    els.taxRateInput.setAttribute("aria-disabled", String(automatic));
+    if (els.taxRateHelp) {
+      els.taxRateHelp.textContent = automatic
+        ? "Automatic uses 72.5¢/mi for Jan–Jun 2026 and 76¢/mi for Jul–Dec 2026, while preserving the saved date on each delivery."
+        : "Custom applies this fixed rate to every saved delivery. Verify tax treatment with a qualified professional.";
     }
   }
 
@@ -2319,23 +2541,24 @@
   }
 
   function renderShiftButton() {
-    const runningToday = shift.active && shift.startedAt && isToday(shift.startedAt);
-    const label = runningToday ? "End Day" : "Start Day";
+    const running = Boolean(shift.active && shift.startedAt);
+    const label = running ? "End Day" : "Start Day";
     els.shiftBtn.textContent = label;
     if (els.heroShiftBtn) els.heroShiftBtn.textContent = label;
     if (els.pauseShiftBtn) {
-      els.pauseShiftBtn.disabled = !runningToday;
+      els.pauseShiftBtn.disabled = !running;
       els.pauseShiftBtn.textContent = shift.paused ? "Resume" : "Pause";
-      els.pauseShiftBtn.setAttribute("aria-label", shift.paused ? "Resume today's driving shift" : "Pause today's driving shift for a break");
+      els.pauseShiftBtn.setAttribute("aria-label", shift.paused ? "Resume the driving shift" : "Pause the driving shift for a break");
     }
   }
 
   function renderDeliveryPreview() {
     if (!els.deliveryPreview) return;
     const earnings = num(els.earningsInput.value);
+    const milesRaw = String(els.milesInput.value || "").trim();
     const miles = num(els.milesInput.value);
     const minutes = num(els.minutesInput.value);
-    if (!earnings || !miles) {
+    if (!earnings || milesRaw === "" || miles < 0) {
       els.deliveryPreview.textContent = "Enter earnings and miles to preview profit.";
       els.deliveryPreview.className = "delivery-preview";
       return;
@@ -2344,9 +2567,13 @@
     const perMile = grossDollarPerMile(earnings, miles);
     const profitMile = estimatedProfitPerMile(profit, miles);
     const hourly = grossHourlyRate(earnings, minutes);
-    const good = perMile >= settings.minPerMile && (!minutes || hourly >= settings.minPerHour);
+    const good = miles === 0
+      ? earnings >= settings.minPayout
+      : perMile >= settings.minPerMile && (!minutes || hourly >= settings.minPerHour);
     els.deliveryPreview.className = `delivery-preview ${good ? "good" : "bad"}`;
-    els.deliveryPreview.textContent = `${money.format(profit)} estimated profit · ${money.format(perMile)}/mi gross · ${money.format(profitMile)}/mi profit${minutes ? ` · ${money.format(hourly)}/hr` : ""}`;
+    els.deliveryPreview.textContent = miles === 0
+      ? `${money.format(profit)} estimated profit · mileage not tracked yet${minutes ? ` · ${money.format(hourly)}/hr` : ""}`
+      : `${money.format(profit)} estimated profit · ${money.format(perMile)}/mi gross · ${money.format(profitMile)}/mi profit${minutes ? ` · ${money.format(hourly)}/hr` : ""}`;
   }
 
   function renderDecision({ announce = false } = {}) {
@@ -2639,6 +2866,7 @@
   }
 
   function closeQuickAdd() {
+    quickScanGeneration += 1;
     els.quickAddSheet.classList.add("hidden");
     els.quickAddSheet.setAttribute("aria-hidden", "true");
     document.body.classList.remove("sheet-open");
@@ -2713,6 +2941,7 @@
   }
 
   function clearQuickScan(clearFile = true) {
+    quickScanGeneration += 1;
     quickOCRText = "";
     quickOCRParsed = null;
     if (!els.quickScanStatus) return;
@@ -2750,20 +2979,167 @@
     return `${status.charAt(0).toUpperCase()}${status.slice(1)}${percent}`;
   }
 
+  function hasOCRAPI(api = globalThis.Tesseract) {
+    return Boolean(api && (typeof api.createWorker === "function" || typeof api.recognize === "function"));
+  }
+
+  function validateScreenshotFile(file) {
+    if (!file || typeof file !== "object") return "Choose an image screenshot first.";
+    if (file.type && !String(file.type).toLowerCase().startsWith("image/")) return "Choose a browser-supported image such as PNG or JPEG.";
+    if (Number(file.size) > MAX_SCREENSHOT_BYTES) return "This image is over 20 MB. Crop it or choose a smaller screenshot.";
+    return "";
+  }
+
+  function classifyAccentPixel(red, green, blue) {
+    if (red >= 170 && green >= 65 && green <= 190 && blue <= 120 && red >= green * 1.15 && green >= blue * 1.2) return "orange";
+    if (red >= 155 && green <= 140 && blue <= 145 && red >= green * 1.35 && red >= blue * 1.25) return "red";
+    if (green >= 105 && red <= 145 && blue <= 165 && green >= red * 1.2 && green >= blue * 1.04) return "green";
+    if (blue >= 130 && red <= 150 && blue >= red * 1.2 && blue >= green * 1.08) return "blue";
+    return "";
+  }
+
+  async function analyzeScreenshotAccent(file) {
+    if (typeof globalThis.createImageBitmap !== "function" || !document?.createElement) return null;
+    let bitmap = null;
+    try {
+      bitmap = await globalThis.createImageBitmap(file);
+      if (!bitmap?.width || !bitmap?.height) return null;
+      const canvas = document.createElement("canvas");
+      const context = typeof canvas.getContext === "function" ? canvas.getContext("2d", { willReadFrequently: true }) : null;
+      if (!context || typeof context.getImageData !== "function") return null;
+      const width = 160;
+      const sourceY = Math.floor(bitmap.height * 0.34);
+      const sourceHeight = Math.max(1, bitmap.height - sourceY);
+      const height = Math.max(80, Math.round(width * sourceHeight / bitmap.width));
+      canvas.width = width;
+      canvas.height = height;
+      context.drawImage(bitmap, 0, sourceY, bitmap.width, sourceHeight, 0, 0, width, height);
+      const pixels = context.getImageData(0, 0, width, height).data;
+      const counts = { red: 0, green: 0, orange: 0, blue: 0 };
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index + 3] < 180) continue;
+        const color = classifyAccentPixel(pixels[index], pixels[index + 1], pixels[index + 2]);
+        if (color) counts[color] += 1;
+      }
+      const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      const [color, count] = ranked[0];
+      const runnerUp = ranked[1]?.[1] || 0;
+      const pixelCount = pixels.length / 4;
+      const ratio = pixelCount ? count / pixelCount : 0;
+      if (ratio < 0.008 || count < runnerUp * 1.35) return null;
+      const platformMap = { red: "DoorDash", green: "Uber Eats", orange: "Grubhub" };
+      return {
+        color,
+        platform: platformMap[color] || "",
+        candidates: color === "blue" ? ["Spark", "Amazon Flex"] : [],
+        confidence: Math.min(90, Math.round(58 + Math.min(ratio, 0.08) * 300))
+      };
+    } catch (error) {
+      console.warn("GigLens skipped optional screenshot color analysis", error);
+      return null;
+    } finally {
+      if (bitmap && typeof bitmap.close === "function") bitmap.close();
+    }
+  }
+
+  function mergeVisualPlatformEvidence(platformResult, visualEvidence, allowVisualSelection = false) {
+    const result = {
+      ...platformResult,
+      evidence: Array.isArray(platformResult?.evidence) ? [...platformResult.evidence] : []
+    };
+    if (!visualEvidence) return result;
+    const accentLabel = `${visualEvidence.color} interface accent`;
+    if (visualEvidence.platform) {
+      if (result.platform === visualEvidence.platform) {
+        result.platformConfidence = Math.min(99, Math.max(result.platformConfidence || 0, visualEvidence.confidence) + 6);
+        result.evidence.push(accentLabel);
+      } else if (allowVisualSelection && (!result.platform || (result.platformConfidence || 0) < 58)) {
+        result.platform = visualEvidence.platform;
+        result.platformConfidence = Math.min(76, visualEvidence.confidence);
+        result.evidence = [accentLabel];
+      }
+    } else if (visualEvidence.color === "blue" && visualEvidence.candidates.includes(result.platform)) {
+      result.platformConfidence = Math.min(99, Math.max(result.platformConfidence || 0, visualEvidence.confidence) + 4);
+      result.evidence.push(accentLabel);
+    }
+    return result;
+  }
+
+  async function ensureOCRLibraryLoaded(onProgress) {
+    if (hasOCRAPI()) return globalThis.Tesseract;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      throw new Error("OCR library is not loaded yet. You appear to be offline, so type the delivery manually or reconnect and retry.");
+    }
+    if (!document.head || typeof document.createElement !== "function") {
+      throw new Error("OCR library is not available in this browser. Type the delivery manually.");
+    }
+
+    onProgress?.("Loading the secure OCR library…");
+    if (!ocrLibraryPromise) {
+      const previous = document.querySelector('script[data-giglens-ocr-library="true"]');
+      if (previous) previous.remove();
+      ocrLibraryPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = OCR_LIBRARY_URL;
+        script.async = true;
+        script.integrity = OCR_LIBRARY_INTEGRITY;
+        script.crossOrigin = "anonymous";
+        script.referrerPolicy = "no-referrer";
+        script.dataset.giglensOcrLibrary = "true";
+        script.onload = () => hasOCRAPI()
+          ? resolve(globalThis.Tesseract)
+          : reject(new Error("OCR library loaded without a recognition API."));
+        script.onerror = () => reject(new Error("OCR library could not be downloaded. Check the connection and try again."));
+        document.head.appendChild(script);
+      });
+    }
+
+    try {
+      return await withTimeout(
+        ocrLibraryPromise,
+        OCR_INIT_TIMEOUT_MS,
+        "OCR library took too long to load. Check the connection and try again."
+      );
+    } catch (error) {
+      ocrLibraryPromise = null;
+      const failed = document.querySelector('script[data-giglens-ocr-library="true"]');
+      if (failed && !hasOCRAPI()) failed.remove();
+      throw error;
+    }
+  }
+
+  async function terminateOCRWorker(worker) {
+    if (!worker || typeof worker.terminate !== "function") return;
+    try {
+      await withTimeout(
+        Promise.resolve().then(() => worker.terminate()),
+        OCR_TERMINATE_TIMEOUT_MS,
+        "OCR worker cleanup timed out."
+      );
+    } catch (error) {
+      console.warn("GigLens OCR worker cleanup stopped safely", error);
+    }
+  }
+
   async function recognizeScreenshot(file, onProgress) {
-    const api = globalThis.Tesseract;
-    if (!api) throw new Error("OCR library is unavailable. Check your internet connection and reload GigLens.");
+    const api = await ensureOCRLibraryLoaded(onProgress);
     let worker = null;
+    let workerPromise = null;
     try {
       if (typeof api.createWorker === "function") {
-        const workerPromise = api.createWorker("eng", 1, {
+        workerPromise = Promise.resolve(api.createWorker("eng", 1, {
           workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@v5.1.1/dist/worker.min.js",
           corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0",
           langPath: "https://tessdata.projectnaptha.com/4.0.0",
           logger: (message) => onProgress?.(formatOCRProgress(message)),
           errorHandler: (error) => console.error("GigLens OCR worker error", error)
-        });
-        worker = await withTimeout(workerPromise, OCR_INIT_TIMEOUT_MS, "OCR engine took too long to start. Check your connection and try again.");
+        }));
+        try {
+          worker = await withTimeout(workerPromise, OCR_INIT_TIMEOUT_MS, "OCR engine took too long to start. Check your connection and try again.");
+        } catch (error) {
+          void workerPromise.then((lateWorker) => terminateOCRWorker(lateWorker)).catch(() => {});
+          throw error;
+        }
         return await withTimeout(worker.recognize(file), OCR_RECOGNIZE_TIMEOUT_MS, "OCR took too long. Try a smaller or clearer screenshot.");
       }
       if (typeof api.recognize === "function") {
@@ -2771,15 +3147,19 @@
       }
       throw new Error("OCR library loaded without a recognition API.");
     } finally {
-      if (worker && typeof worker.terminate === "function") {
-        try { await worker.terminate(); } catch (error) { console.warn("GigLens OCR worker cleanup failed", error); }
-      }
+      await terminateOCRWorker(worker);
     }
   }
 
   async function scanQuickScreenshot(file) {
     if (!file) return;
     clearQuickScan(false);
+    const scanGeneration = quickScanGeneration;
+    const validationError = validateScreenshotFile(file);
+    if (validationError) {
+      setQuickScanState("failed", validationError);
+      return;
+    }
     if (els.quickPreviewImage) {
       if (els.quickPreviewImage.dataset.url) URL.revokeObjectURL(els.quickPreviewImage.dataset.url);
       const url = URL.createObjectURL(file);
@@ -2788,17 +3168,16 @@
       els.quickPreviewImage.classList.remove("hidden");
     }
     setQuickScanState("loading", "Scanning screenshot for restaurant, pay, miles, and time…");
-    if (!globalThis.Tesseract || (typeof globalThis.Tesseract.recognize !== "function" && typeof globalThis.Tesseract.createWorker !== "function")) {
-      const offlineHint = navigator && navigator.onLine === false
-        ? " You appear to be offline, so OCR may be unavailable until the library has loaded once online."
-        : "";
-      setQuickScanState("failed", `OCR library is not loaded yet.${offlineHint} You can still type the delivery below.`);
-      return;
-    }
     try {
-      const result = await recognizeScreenshot(file, (progress) => setQuickScanState("loading", progress));
+      const [result, visualEvidence] = await Promise.all([
+        recognizeScreenshot(file, (progress) => {
+          if (scanGeneration === quickScanGeneration) setQuickScanState("loading", progress);
+        }),
+        analyzeScreenshotAccent(file)
+      ]);
+      if (scanGeneration !== quickScanGeneration) return;
       quickOCRText = result?.data?.text || "";
-      quickOCRParsed = parseOCR(quickOCRText);
+      quickOCRParsed = parseOCR(quickOCRText, visualEvidence);
       quickOCRParsed.merchantType = inferMerchantType(quickOCRParsed.merchant, quickOCRText);
       populateQuickFromOCR(quickOCRParsed);
       if (els.quickOcrText) els.quickOcrText.textContent = quickOCRText || "No readable text detected.";
@@ -2811,6 +3190,7 @@
         : `Scan complete.${merchantText} Review and save.`;
       setQuickScanState(label === "Needs review" ? "failed" : "success", message);
     } catch (err) {
+      if (scanGeneration !== quickScanGeneration) return;
       console.error(err);
       quickOCRParsed = null;
       setQuickScanState("failed", `Could not scan this screenshot. ${err?.message || "Type the delivery below or try another image."}`);
@@ -2879,6 +3259,12 @@
   async function scanScreenshot(file) {
     if (!file) return;
     clearOCR(false);
+    const scanGeneration = fullScanGeneration;
+    const validationError = validateScreenshotFile(file);
+    if (validationError) {
+      setScanState("failed", validationError);
+      return;
+    }
     if (els.previewImage.dataset.url) URL.revokeObjectURL(els.previewImage.dataset.url);
     const url = URL.createObjectURL(file);
     els.previewImage.dataset.url = url;
@@ -2886,18 +3272,16 @@
     els.previewImage.classList.remove("hidden");
     setScanState("loading", "Scanning screenshot…");
 
-    if (!globalThis.Tesseract || (typeof globalThis.Tesseract.recognize !== "function" && typeof globalThis.Tesseract.createWorker !== "function")) {
-      const offlineHint = navigator && navigator.onLine === false
-        ? " You appear to be offline, so OCR may be unavailable until the library has loaded once online."
-        : "";
-      setScanState("failed", `OCR library is not loaded yet.${offlineHint} You can still enter the delivery manually.`);
-      return;
-    }
-
     try {
-      const result = await recognizeScreenshot(file, (progress) => setScanState("loading", progress));
+      const [result, visualEvidence] = await Promise.all([
+        recognizeScreenshot(file, (progress) => {
+          if (scanGeneration === fullScanGeneration) setScanState("loading", progress);
+        }),
+        analyzeScreenshotAccent(file)
+      ]);
+      if (scanGeneration !== fullScanGeneration) return;
       lastOCRText = result?.data?.text || "";
-      lastOCRParsed = parseOCR(lastOCRText);
+      lastOCRParsed = parseOCR(lastOCRText, visualEvidence);
       lastOCRParsed.merchantType = inferMerchantType(lastOCRParsed.merchant, lastOCRText);
       els.ocrText.textContent = lastOCRText || "No readable text detected.";
       els.ocrDetails.classList.remove("hidden");
@@ -2908,6 +3292,7 @@
         : "Scan complete. Review before saving.";
       setScanState("success", message);
     } catch (err) {
+      if (scanGeneration !== fullScanGeneration) return;
       console.error(err);
       lastOCRParsed = null;
       setScanState("failed", `Could not scan this screenshot. ${err?.message || "Enter the delivery manually or try another image."}`);
@@ -2938,6 +3323,7 @@
     } else {
       els.ocrCompany.textContent = "Needs review";
     }
+    if (els.ocrMerchantLabel) els.ocrMerchantLabel.textContent = merchantTypeLabel(parsed.merchantType);
     if (els.ocrMerchant) els.ocrMerchant.textContent = parsed.merchant || "Needs review";
     els.ocrEarnings.textContent = parsed.earnings ? money.format(parsed.earnings) : "Needs review";
     els.ocrMiles.textContent = parsed.miles ? `${parsed.miles.toFixed(1)} mi` : "Needs review";
@@ -3052,6 +3438,7 @@
   }
 
   function clearOCR(clearFile = true) {
+    fullScanGeneration += 1;
     lastOCRText = "";
     lastOCRParsed = null;
     els.ocrReview.classList.add("hidden");
@@ -3086,11 +3473,13 @@
     }
   }
 
-  function parseOCR(text) {
+  function parseOCR(text, visualEvidence = null) {
     const rawText = String(text || "");
     const lines = ocrLines(rawText);
     const normalized = rawText.replace(/\s+/g, " ").trim();
-    const platformResult = detectPlatformDetailed(normalized);
+    const hasOfferWorkflow = /\b(?:accept|decline|pickup|pick\s*up|drop[ -]?off|deliver(?:y)?|offer)\b/i.test(normalized)
+      && /(?:\$\s*\d|\b\d+(?:[.,]\d+)?\s*(?:mi|miles?|mins?|minutes?)\b|guaranteed)/i.test(normalized);
+    const platformResult = mergeVisualPlatformEvidence(detectPlatformDetailed(normalized), visualEvidence, hasOfferWorkflow);
     const platform = platformResult.platform;
     const earnings = detectEarnings(normalized);
     const miles = detectMiles(normalized);
@@ -3163,14 +3552,23 @@
   const knownStorePatterns = [
     [/\bwalmart\b/i, "Walmart"], [/\bschnucks\b/i, "Schnucks"], [/\btarget\b/i, "Target"],
     [/\bbest\s*buy\b/i, "Best Buy"], [/\bcostco\b/i, "Costco"], [/\bwalgreens\b/i, "Walgreens"],
-    [/\bcvs\b/i, "CVS"], [/\bhome\s*depot\b/i, "Home Depot"], [/\blowe'?s\b/i, "Lowe's"]
+    [/\bcvs\b/i, "CVS"], [/\bhome\s*depot\b/i, "Home Depot"], [/\blowe'?s\b/i, "Lowe's"],
+    [/\bsam'?s\s*club\b/i, "Sam's Club"], [/\baldi\b/i, "ALDI"], [/\bkroger\b/i, "Kroger"],
+    [/\bpublix\b/i, "Publix"], [/\bmeijer\b/i, "Meijer"], [/\bdollar\s*general\b/i, "Dollar General"],
+    [/\bdollar\s*tree\b/i, "Dollar Tree"], [/\bpetsmart\b/i, "PetSmart"], [/\bpetco\b/i, "Petco"],
+    [/\bsephora\b/i, "Sephora"], [/\bthe\s*ups\s*store\b|\bups\s*store\b/i, "The UPS Store"]
   ];
 
+  function detectKnownStore(text) {
+    const source = String(text || "");
+    for (const [pattern, label] of knownStorePatterns) {
+      if (pattern.test(source)) return label;
+    }
+    return "";
+  }
+
   function inferMerchantType(merchant, context = "") {
-    const source = `${merchant || ""} ${context || ""}`;
-    if (knownStorePatterns.some(([pattern]) => pattern.test(source)) || /\b(?:store|grocery|market|pharmacy|retail|curbside|items? to shop)\b/i.test(source)) return "store";
-    if (detectKnownRestaurant(source) || /\b(?:restaurant|cafe|café|grill|kitchen|diner|pizza|taco|burger|chicken|sushi|bakery)\b/i.test(source)) return "restaurant";
-    return "merchant";
+    return normalizeMerchantTypeValue(null, merchant, context);
   }
 
   function cleanMerchantName(value) {
@@ -3195,7 +3593,7 @@
     [/first\s*watch/i, "First Watch"], [/bob\s*evans/i, "Bob Evans"], [/texas\s*roadhouse/i, "Texas Roadhouse"], [/red\s*robin/i, "Red Robin"],
     [/p\.\s*f\.\s*chang'?s|pf\s*chang'?s/i, "P.F. Chang's"], [/penn\s*station/i, "Penn Station"], [/charleys?\s*cheesesteaks?/i, "Charleys Cheesesteaks"],
     [/white\s*castle/i, "White Castle"], [/jack\s*in\s*the\s*box/i, "Jack in the Box"], [/hardee'?s/i, "Hardee's"], [/carl'?s\s*jr/i, "Carl's Jr."],
-    [/el\s*potro|el\s*maguey|el\s*mezcal|la\s*fiesta|taqueria/i, "Mexican Restaurant"]
+    [/\bel\s*potro\b/i, "El Potro"], [/\bel\s*maguey\b/i, "El Maguey"], [/\bel\s*mezcal\b/i, "El Mezcal"], [/\bla\s*fiesta\b/i, "La Fiesta"]
   ];
 
   function detectKnownRestaurant(text) {
@@ -3224,7 +3622,8 @@
   function isMerchantCandidate(value) {
     const cleaned = cleanMerchantName(value);
     if (!cleaned || cleaned.length < 3 || cleaned.length > 80) return false;
-    if (platformRegex().test(cleaned) || merchantRejectRegex().test(cleaned)) return false;
+    const knownStore = detectKnownStore(cleaned);
+    if ((platformRegex().test(cleaned) && !knownStore) || merchantRejectRegex().test(cleaned)) return false;
     if (/\$|\b\d+(?:\.\d+)?\s*(?:mi|mile|min|minutes?)\b/i.test(cleaned)) return false;
     if (/^[0-9#\-.,\s]+$/.test(cleaned)) return false;
     if (looksLikeAddress(cleaned)) return false;
@@ -3235,7 +3634,9 @@
   function addMerchantCandidate(candidates, value, score, reason, index = 999) {
     const cleaned = cleanMerchantName(value);
     if (!isMerchantCandidate(cleaned)) return;
-    const known = detectKnownRestaurant(cleaned);
+    const knownRestaurant = detectKnownRestaurant(cleaned);
+    const knownStore = detectKnownStore(cleaned);
+    const known = knownRestaurant || knownStore;
     const finalValue = known || cleaned;
     const existing = candidates.find((candidate) => candidate.value.toLowerCase() === finalValue.toLowerCase());
     const candidate = { value: finalValue, score: score + (known ? 6 : 0), reason, index };
@@ -3263,9 +3664,11 @@
   }
 
   function detectMerchant(lines, normalizedText, platform = "") {
-    const known = detectKnownRestaurant(normalizedText);
+    const knownRestaurant = detectKnownRestaurant(normalizedText);
+    const knownStore = detectKnownStore(normalizedText);
     const candidates = [];
-    if (known) addMerchantCandidate(candidates, known, 18, "known restaurant", 0);
+    if (knownRestaurant) addMerchantCandidate(candidates, knownRestaurant, 18, "known restaurant", 0);
+    if (knownStore) addMerchantCandidate(candidates, knownStore, 18, "known store", 0);
 
     extractMerchantFromLabeledText(normalizedText, candidates);
 
@@ -3511,6 +3914,7 @@
   function saveDelivery(event, options = {}) {
     event.preventDefault();
     const earnings = num(els.earningsInput.value);
+    const milesRaw = String(els.milesInput.value || "").trim();
     const miles = num(els.milesInput.value);
     const minutes = num(els.minutesInput.value);
     const selectedCompany = els.companyInput.value || settings.defaultCompany || "Other";
@@ -3521,8 +3925,8 @@
       flagInvalid(els.earningsInput);
       return;
     }
-    if (!miles || miles <= 0) {
-      toast("Enter the delivery miles first.");
+    if (milesRaw === "" || miles < 0) {
+      toast("Enter delivery miles, or 0 if mileage is not available yet.");
       flagInvalid(els.milesInput);
       return;
     }
@@ -3642,6 +4046,7 @@
       gasPrice: els.gasPriceInput.value,
       mpg: els.mpgInput.value,
       maintenancePerMile: els.maintenanceInput.value,
+      mileageDeductionMode: els.taxRateModeInput.value,
       taxMileageRate: els.taxRateInput.value,
       minPerMile: els.minPerMileInput.value,
       minPerHour: els.minPerHourInput.value,
@@ -3711,14 +4116,15 @@
     els.decisionLogList.innerHTML = rows.map((d) => `<article class="history-item"><div class="history-top"><strong>${escapeHTML(d.outcome)} · ${escapeHTML(d.company)}</strong><strong>${money.format(d.pay)}</strong></div><div class="history-meta">${d.miles.toFixed(1)} mi · ${d.minutes} min${d.zone ? ` · ${escapeHTML(d.zone)}` : ""}</div></article>`).join("");
   }
 
-  function exportDecisionCSV() {
+  async function exportDecisionCSV() {
     const rows = [["createdAt", "outcome", "company", "pay", "miles", "minutes", "zone", "note"]];
     decisions.forEach((d) => rows.push([d.createdAt, d.outcome, d.company, d.pay.toFixed(2), d.miles.toFixed(1), d.minutes, d.zone, d.note]));
-    downloadFile(`giglens-decisions-${todayKey()}.csv`, csvRowsToText(rows), "text/csv;charset=utf-8");
+    await shareOrDownload(csvRowsToText(rows), `giglens-decisions-${todayKey()}.csv`, "text/csv;charset=utf-8");
+    toast(decisions.length ? "Decision CSV exported." : "Decision CSV exported with headers only.");
   }
 
   function togglePauseShift() {
-    if (!shift.active || !shift.startedAt || !isToday(shift.startedAt)) return toast("Start the day before taking a break.");
+    if (!shift.active || !shift.startedAt) return toast("Start the day before taking a break.");
     const now = new Date().toISOString();
     const breaks = [...(shift.breaks || [])];
     if (shift.paused) {
@@ -3736,7 +4142,7 @@
   }
 
   function toggleShift() {
-    if (shift.active && shift.startedAt && isToday(shift.startedAt)) {
+    if (shift.active && shift.startedAt) {
       const now = new Date().toISOString();
       if (shift.paused) {
         const breaks = [...(shift.breaks || [])];
@@ -3744,8 +4150,20 @@
         if (openIndex >= 0) breaks[openIndex] = { ...breaks[openIndex], endedAt: now };
         shift = normalizeShift({ ...shift, paused: false, pausedAt: null, breaks });
       }
-      const todays = todayDeliveries();
-      const recap = buildDriverRecap(todays, calculate(todays), { startedAt: shift.startedAt, endedAt: now });
+      const shiftStartMs = new Date(shift.startedAt).getTime();
+      const shiftEndMs = new Date(now).getTime();
+      const shiftRows = activeDeliveries().filter((delivery) => {
+        const createdMs = new Date(delivery.createdAt).getTime();
+        return Number.isFinite(createdMs) && createdMs >= shiftStartMs && createdMs <= shiftEndMs;
+      });
+      const activeMilliseconds = activeShiftMilliseconds(shift.startedAt, now, shift.breaks || []);
+      const activeHours = Math.round((activeMilliseconds / 36e5) * 1000) / 1000;
+      const shiftSummary = ProfitEngine.summarizeRows(shiftRows, {
+        config: settings,
+        workWindow: { activeMilliseconds },
+        activeShift: false
+      });
+      const recap = buildDriverRecap(shiftRows, shiftSummary, { startedAt: shift.startedAt, endedAt: now });
       shift = normalizeShift({
         ...shift,
         active: false,
@@ -3758,6 +4176,8 @@
             id: makeId(),
             startedAt: shift.startedAt,
             endedAt: now,
+            breaks: shift.breaks || [],
+            activeHours,
             summary: recap.text,
             recommendation: recap.recommendation,
             metrics: recap.metrics,
@@ -3843,8 +4263,8 @@
         d.company,
         d.earnings,
         d.miles,
-        settings.mileageDeductionRate,
-        mileageDeduction(d.miles),
+        ProfitEngine.mileageRateForDate(d, settings),
+        mileageDeduction(d.miles, settings, d),
         fuelCostEstimate(d.miles),
         maintenanceCostEstimate(d.miles),
         deliveryProfit(d)
@@ -3912,9 +4332,9 @@
       savedAt: new Date().toISOString(),
       reason,
       schema: {
-        delivery: ["id", "date", "createdAt", "updatedAt", "company", "merchant", "restaurant", "earnings", "miles", "minutes", "zone", "note", "notes", "source", "ocrText", "ocrConfidence", "tags", "deleted", "version"],
-        settings: ["dailyGoal", "defaultCompany", "defaultZone", "gasPrice", "vehicleMpg", "maintenanceCostPerMile", "mileageDeductionRate", "minimumDollarPerMile", "minimumDollarPerHour", "minimumPayout", "maxMiles", "customZones", "theme", "appDataVersion"],
-        shift: ["active", "paused", "pausedAt", "breaks", "startedAt", "endedAt", "lastSummary", "shiftHistory", "recommendation", "metrics", "appDataVersion"],
+        delivery: ["id", "date", "createdAt", "updatedAt", "company", "merchant", "restaurant", "merchantType", "earnings", "miles", "minutes", "zone", "note", "notes", "source", "ocrText", "ocrConfidence", "tags", "deleted", "version"],
+        settings: ["dailyGoal", "defaultCompany", "defaultZone", "gasPrice", "vehicleMpg", "maintenanceCostPerMile", "mileageDeductionMode", "mileageDeductionRate", "minimumDollarPerMile", "minimumDollarPerHour", "minimumPayout", "maxMiles", "customZones", "theme", "appDataVersion"],
+        shift: ["active", "paused", "pausedAt", "breaks", "startedAt", "endedAt", "lastSummary", "shiftHistory", "activeHours", "recommendation", "metrics", "appDataVersion"],
         decision: ["id", "outcome", "company", "pay", "miles", "minutes", "zone", "note", "source", "createdAt", "version"],
         ocrLearning: ["version", "corrections"]
       },
@@ -4283,6 +4703,7 @@
     $("deliveryForm").addEventListener("submit", saveDelivery);
     els.quickAddForm.addEventListener("submit", saveQuickDelivery);
     els.saveSettingsBtn.addEventListener("click", saveSettings);
+    if (els.taxRateModeInput) els.taxRateModeInput.addEventListener("change", renderTaxRateMode);
     els.addCustomZoneBtn.addEventListener("click", addCustomZone);
     els.customZoneInput.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); addCustomZone(); } });
     els.customZoneList.addEventListener("click", handleCustomZoneAction);
@@ -4340,9 +4761,12 @@
     els.copyDecisionBtn.addEventListener("click", copyDecisionSummary);
     els.saveOfferAsDeliveryBtn.addEventListener("click", saveOfferAsDelivery);
     els.historyList.addEventListener("click", (event) => {
-      const action = event.target.closest("[data-delete],[data-edit],[data-duplicate],[data-open-add]");
+      const action = event.target.closest("[data-delete],[data-edit],[data-duplicate],[data-open-add],[data-history-more]");
       if (!action) return;
-      if (action.dataset.delete) deleteDelivery(action.dataset.delete);
+      if (action.dataset.historyMore !== undefined) {
+        historyDayLimit += HISTORY_PAGE_DAYS;
+        renderHistory();
+      } else if (action.dataset.delete) deleteDelivery(action.dataset.delete);
       else if (action.dataset.edit) editDelivery(action.dataset.edit);
       else if (action.dataset.duplicate) duplicateDelivery(action.dataset.duplicate);
       else if (action.dataset.openAdd) openAdd(action.dataset.openAdd);

@@ -1,3 +1,27 @@
+## 4.2.0 audited command-center release
+
+GigLens 4.2 is a focused audit and performance release built from the uploaded 4.1.2 stability package. It keeps the app static, plain HTML/CSS/JavaScript, and local-first while repairing edge cases that the previous passing suite did not cover.
+
+- Screenshot classification now combines app-specific OCR fingerprints with conservative lower-screen accent analysis. Strong green can support Uber Eats, red DoorDash, and orange Grubhub only when the OCR text also looks like an offer; blue remains ambiguous between Spark and Amazon Flex until app-specific text supports one.
+- Local OCR learning cannot transfer a platform from generic words such as `delivery`, `pickup`, or `accept`. Similar-screenshot transfer now requires a shared platform-specific token. Exact reviewed screenshots still reuse their saved correction.
+- Merchant parsing keeps real taqueria names instead of replacing them with the generic label “Mexican Restaurant,” recognizes more grocery/retail chains, and uses Instacart/Spark/Amazon context when classifying stores.
+- Imported shifts repair mismatched pause flags, create a missing open break from `pausedAt`, and merge duplicate or overlapping breaks before hourly calculations.
+- Automatic U.S. mileage-rate mode applies `0.725` per mile to Jan–Jun 2026 records and `0.76` per mile to Jul–Dec 2026 records. Existing non-default custom rates remain custom. Tax CSV rows use each delivery's saved date. These are estimates, not tax advice.
+- History renders 30 days initially with a working “Show older history” action, avoiding an unnecessarily large DOM for long-running local ledgers. Zone counts no longer repeatedly sort and scan the entire delivery list.
+- The UI adds stronger command-center depth, platform-colored history cards, clearer tax controls, smoother desktop hover states, mobile-safe spacing, and off-screen rendering hints. The obsolete hidden mobile action dock was removed from the HTML.
+- PWA icon references now use one canonical 180/192/512/1024 set; duplicate versioned icon copies were removed and the service-worker cache was bumped.
+
+See `AUDIT_REPORT.md` for findings, tests, remaining risks, and the manual QA checklist.
+
+## 4.1.2 stability and timing repair
+
+GigLens now loads its pinned OCR library only when a scan begins, preventing a slow third-party script from delaying normal app startup. Scanner cleanup has a hard timeout, stale results cannot overwrite a newer screenshot, images over 20 MB fail clearly, and manual entry remains available throughout. Paused time is now actually subtracted from hourly metrics, multiple same-day shifts combine their active time correctly, and shift recaps use the deliveries and breaks from that shift. Manual Add now accepts an explicit zero-mile record consistently with Quick Add and OCR review.
+
+The default U.S. business-mileage deduction rate is updated to the 2026 value of `0.725` per mile. Existing custom rates remain editable; installations still carrying the exact prior `0.67` default are migrated. This GitHub-only release also removes obsolete Netlify files and instructions.
+
+## 4.1.1 audit repair
+GigLens now preserves `merchantType` on saved, migrated, backed-up, and imported delivery records. OCR recognizes known retail/grocery pickups such as Schnucks, Walmart, and Best Buy as stores, and History labels pickups as Restaurant, Store, or Merchant.
+
 ## 4.1.0 — Local scanner learning and mobile layout repair
 
 GigLens now learns from reviewed screenshot corrections locally on the device. When a scan is wrong, correct the Company, Restaurant/Store, earnings, miles, or minutes and save it. GigLens stores a compact correction profile—not the screenshot image—and uses exact matches, similar app-workflow text, merchant aliases, and numeric context to improve later scans. Scanner learning can be reviewed and reset under **Settings → Privacy and data controls** and is included in JSON backups.
@@ -8,7 +32,9 @@ The in-app logo is now embedded directly in the page, eliminating the broken-ima
 
 GigLens is a private, local-first command center for drivers who run several gig apps at once. Its fastest workflow is: take an offer or completed-delivery screenshot, scan it, review the detected app/merchant/pay/miles/time, and save it while the day is still moving. Saved deliveries then power earnings, estimated profit, mileage deduction, hourly pace, platform, zone, shift, and accept/decline analytics.
 
-Current release: `4.0.1`.
+Current release: `4.2.0`.
+
+Release verification: JavaScript syntax passed; the expanded executable browser-mock smoke suite passed; all `42/42` Python regressions passed; the supplied Uber/DoorDash screenshot accent calibration passed; desktop and 390×844 iPhone browser QA passed with no console errors; canonical icon validation and public-secret scanning passed.
 
 ## 4.0.1 icon and OCR recovery repair
 
@@ -69,7 +95,7 @@ GigLens is a local-first Progressive Web App for gig delivery drivers. It tracks
 
 ## Current release
 
-Version: `4.0.0`, built on the v3.9.0 app-specific OCR and paused-shift release.
+Version: `4.2.0`, built on the v4.1.2 stability package.
 
 This release preserves the static PWA architecture. There is no backend, database server, framework, build step, or account system. The app runs from plain static files and stores user data locally in the browser.
 
@@ -101,14 +127,14 @@ This release preserves the static PWA architecture. There is no backend, databas
 - Local driver coaching with a Daily Recap card, copyable recap text, best/weakest delivery analysis, platform/zone suggestions, and saved end-shift recap history.
 - Tax & Export Center with standard CSV, tax CSV, daily summary CSV, JSON backup, validated backup import preview, merge/replace import modes, duplicate-ID merge safety, and emergency rollback restore.
 - Local-first storage using browser `localStorage` under `giglens.*` keys, with non-destructive migration from legacy `driveledger.*` keys.
-- Phase 13 mobile polish with a sticky one-hand action dock on iPhone-sized screens.
+- Mobile polish with a primary screenshot CTA, five-item bottom navigation, safe-area spacing, and no duplicate floating action dock.
 - Phase 14 installable PWA polish with stronger manifest metadata, cache-versioned offline app shell, offline status messaging, and install/deploy QA guidance.
 - Smart Goal System in Settings that recommends a daily goal from local historical average earnings, profit, and hours by day of week, with Apply or Keep Current Goal actions.
 - Best Time to Drive insights in Analytics that group saved deliveries by hour, show today’s strongest windows, historical best hours, weak hours, average gross/hour, average profit/hour, and mobile-friendly CSS bars.
 - Manual GPS-free Zone Heatmap in Analytics with Best Zone, Reliable Zone, Weak Zone, and Avoid Zone cards calculated from saved delivery zones.
 - Custom zone manager in Settings for adding, renaming, and deleting manual zones without corrupting older saved delivery zone labels.
 - Privacy and Data Control Center in Settings explaining local-only storage, showing localStorage usage, exporting/importing data, resetting settings or deliveries, clearing all active local data with double confirmation, and restoring the latest safety backup/import rollback.
-- Netlify release package with `_redirects`, `DEPLOYMENT.md`, root-file verification, static-hosting checklist, install instructions, and troubleshooting guidance.
+- GitHub Pages release package with `.nojekyll`, `DEPLOYMENT.md`, relative runtime paths, root-file verification, install instructions, and troubleshooting guidance.
 - Subtle visible app credit: **Designed by Tech Phactory Solutions** in the app header/footer and fallback page.
 - GitHub Pages release support with `.nojekyll`, `404.html`, root-file checks, and GitHub deployment troubleshooting guidance.
 - Simplified luxury Today layout: advanced insight cards, recap details, breakdowns, export tools, zones, and privacy controls are tucked behind clean disclosure panels instead of crowding the first view.
@@ -153,20 +179,11 @@ This repair targets restaurant/store recognition after screenshot testing showed
 
 This refinement responds to real app testing feedback that the app had become too cluttered. The Today screen now keeps the premium hero, Quick Add, and last-delivery feedback upfront while moving advanced insights behind a clean disclosure. Secondary tools, export controls, zones, and privacy controls are still available, but they no longer dominate the first view. Screenshot OCR now includes a local heuristic restaurant/store detector with common restaurant pattern matching and pickup/merchant-line detection. The detected restaurant is editable before saving and stored locally with the delivery.
 
-## Phase 20 Netlify Release Package notes
+## Static release packaging notes
 
-Phase 20 prepares GigLens for simple Netlify Drop deployment. The package keeps all runtime files at the root or correctly referenced from the root, adds a Netlify `_redirects` static fallback, adds `DEPLOYMENT.md`, documents Netlify Drop deployment, iPhone/iPad installation, offline reload, localStorage persistence, and troubleshooting. No backend, build step, framework, localhost-only runtime path, environment variable, or cloud database was added.
+GigLens keeps all runtime files at the repository root or correctly referenced with relative paths for GitHub Pages project URLs. `.nojekyll`, `404.html`, `404.js`, and `DEPLOYMENT.md` support branch-based GitHub Pages publishing, iPhone/iPad installation, offline reload, localStorage persistence, and troubleshooting. No backend, build step, framework, localhost-only runtime path, environment variable, or cloud database is required.
 
-### Netlify Drop quick deploy
-
-1. Download and unzip the release ZIP.
-2. Confirm `index.html` is at the root of the unzipped folder.
-3. Drag the unzipped folder into Netlify Drop.
-4. Open the generated HTTPS URL.
-5. Add a test delivery, reload, and confirm it persists.
-6. Open the site in Safari and use **Add to Home Screen** for iPhone/iPad installation.
-
-For the full deployment checklist, see `DEPLOYMENT.md`.
+For the current GitHub Pages upload and install checklist, see `DEPLOYMENT.md`.
 
 ## Phase 19 Privacy and Data Control Center notes
 
@@ -186,7 +203,7 @@ Phase 16 adds a local-only Smart Goal System. The recommendation excludes today�
 
 ## v3 Release Candidate notes
 
-This release candidate completed the final audit and bug bash after Phase 14. No backend, framework, build step, cloud database, or account system was added. The app remains a plain static PWA that can be deployed to Netlify or another HTTPS static host.
+This release candidate completed the final audit and bug bash after Phase 14. No backend, framework, build step, cloud database, or account system was added. The app remains a plain static PWA deployed through GitHub Pages.
 
 Final release audit coverage included:
 
@@ -221,7 +238,7 @@ unsafe NaN / Infinity / undefined / null UI output checks
 ### Known limitations
 
 - GigLens stores data in browser `localStorage`; users should export JSON backups regularly.
-- Screenshot OCR depends on the remote Tesseract.js CDN if the library has not already loaded.
+- Screenshot OCR loads pinned remote Tesseract.js components on demand and therefore requires internet when those components are not already available to the browser.
 - OCR is still heuristic: cropped, blurry, stylized, or newly redesigned app screenshots may need a manual Company or merchant correction in the review card.
 - Smoke tests use a mocked browser environment, not real iPhone/iPad Safari automation.
 - Profit, tax deduction, vehicle cost, and coaching values are estimates based on user-maintained Settings.
@@ -230,7 +247,7 @@ unsafe NaN / Infinity / undefined / null UI output checks
 
 ### Manual QA checklist
 
-1. Deploy the unzipped folder to Netlify over HTTPS.
+1. Deploy the extracted release contents to the GitHub repository root and publish with GitHub Pages.
 2. Open the app in iPhone Safari.
 3. Add to Home Screen and launch from the icon.
 4. Start a shift.
@@ -277,7 +294,7 @@ Core tracking, quick add, history, analytics, exports, backup/restore, and local
 
 ### iPhone Safari install checklist
 
-1. Deploy the folder to an HTTPS host such as Netlify Drop.
+1. Publish the repository through GitHub Pages over HTTPS.
 2. Open the hosted site in Safari.
 3. Tap **Share**.
 4. Tap **Add to Home Screen**.
@@ -293,13 +310,13 @@ Core tracking, quick add, history, analytics, exports, backup/restore, and local
 4. Confirm the mobile action dock and bottom tabs do not overlap content.
 5. Add, edit, export, and reload test data.
 
-### Netlify static deploy checklist
+### GitHub Pages deploy checklist
 
-1. Unzip the release.
-2. Drag the unzipped folder contents to Netlify Drop.
-3. Confirm these files are at the deployed root: `index.html`, `styles.css`, `app.js`, `manifest.json`, `service-worker.js`, and `icons/`.
-4. Open the Netlify URL over HTTPS.
-5. Check browser dev tools Application/Manifest when available.
+1. Extract the release.
+2. Upload the extracted contents to the GitHub repository root.
+3. Confirm these files are at the deployed root: `index.html`, `styles.css`, `app.js`, `manifest.json`, `service-worker.js`, `.nojekyll`, and `icons/`.
+4. Configure **Settings → Pages** for `main` and `/root`.
+5. Open the published GitHub Pages URL over HTTPS.
 6. Reload once to let the service worker cache the app shell.
 
 ### Offline reload checklist
@@ -671,19 +688,19 @@ python -m http.server 8000
 
 Then open `http://localhost:8000`. Localhost is only used for optional local testing; runtime files do not depend on localhost-only paths.
 
-## Deploy to Netlify Drop
+## Deploy to GitHub Pages
 
-1. Download and unzip the release ZIP.
-2. Confirm `index.html`, `app.js`, `styles.css`, `manifest.json`, `service-worker.js`, `_redirects`, and `icons/` are at the root of the unzipped folder.
-3. Drag the unzipped folder into Netlify Drop.
-4. Open the generated HTTPS URL.
-5. Add one test delivery, reload, and confirm it persists.
+1. Download and extract the release ZIP.
+2. Confirm `index.html`, `app.js`, `styles.css`, `manifest.json`, `service-worker.js`, `.nojekyll`, and `icons/` are at the root of the extracted folder.
+3. Upload those contents to the repository root on `main`.
+4. Configure **Settings → Pages** for `main` and `/root`.
+5. Open the published HTTPS URL, add one test delivery, reload, and confirm it persists.
 
 See `DEPLOYMENT.md` for the full deployment, install, offline, and troubleshooting checklist.
 
 ## Install on iPhone/iPad
 
-1. Host the folder with HTTPS, such as Netlify Drop.
+1. Publish the repository with GitHub Pages.
 2. Open the hosted site in Safari.
 3. Tap Share.
 4. Tap **Add to Home Screen**.
@@ -692,7 +709,7 @@ See `DEPLOYMENT.md` for the full deployment, install, offline, and troubleshooti
 
 ## Tests
 
-The ZIP includes a no-dependency smoke test suite. It checks static package structure, manifest/icon paths, JavaScript syntax, UI wiring, local storage namespacing, startup behavior in a mocked browser, manual delivery save, quick-add open/save/invalid-save behavior, save-and-add-another, calculator zone/source persistence, OCR review parsing/save/failure behavior, accept-calculator behavior, shift persistence, shift history persistence, local schema migration, service-worker cached asset references, PWA manifest metadata, offline banner behavior, Clipboard API fallback behavior, command center rendering safety, Netlify `_redirects`, deployment docs, and no localhost-only runtime path checks.
+The ZIP includes a no-dependency smoke test suite. It checks static package structure, manifest/icon paths, JavaScript syntax, UI wiring, local storage namespacing, startup behavior in a mocked browser, manual and zero-mile delivery saves, OCR parsing/failure/cleanup/race behavior, accept-calculator behavior, break-adjusted and multi-shift timing, shift history persistence, local schema migration, service-worker cached asset references, PWA manifest metadata, offline messaging, Clipboard API fallback behavior, command-center rendering safety, GitHub Pages deployment docs, and no localhost-only runtime path checks.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -709,7 +726,7 @@ npm run smoke
 
 - There is no FastAPI/backend layer in this ZIP.
 - Data is stored locally in browser `localStorage`.
-- Screenshot OCR uses Tesseract.js from jsDelivr on first load. If the CDN is unavailable or OCR fails, the app shows a failed scan state and falls back to manual entry.
+- Screenshot OCR loads pinned Tesseract.js components on demand from jsDelivr and Project Naptha. If those hosts are unavailable or OCR fails, the app shows a bounded failed state and falls back to manual entry.
 - Tax and expense numbers are estimates. The mileage rate, gas price, MPG, and maintenance cost are editable in Settings.
 - The smoke test is a mocked browser test, not a substitute for manual iPhone/iPad Safari testing.
 

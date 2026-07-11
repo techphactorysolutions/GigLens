@@ -151,6 +151,7 @@ button, .import-btn { cursor: pointer; -webkit-tap-highlight-color: transparent;
 .ocr-details pre { white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,.22); border: 1px solid rgba(255,255,255,.08); padding: 12px; border-radius: 14px; max-height: 220px; overflow: auto; -webkit-overflow-scrolling: touch; color: #dbe8f7; }
 .form-panel { display: grid; gap: 14px; }
 label { display: grid; gap: 8px; color: var(--muted); font-weight: 800; }
+.field-note { color: var(--muted); font-size: 11px; font-weight: 650; line-height: 1.4; }
 input, select { width: 100%; min-height: 52px; border-radius: 16px; border: 1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.22); color: var(--text); padding: 0 14px; outline: none; font-size: 16px; }
 select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath d='M1 1l6 6 6-6' fill='none' stroke='%2393a4bb' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 16px center; padding-right: 42px; }
 input:focus, select:focus { border-color: rgba(45,245,138,.55); box-shadow: 0 0 0 4px rgba(45,245,138,.08); }
@@ -529,6 +530,183 @@ label { font-size: 14px; }
     animation: none;
     transform: none;
   }
+}
+
+/* GigLens 4.2 — command-center polish, clearer platform identity, and long-history performance */
+:root {
+  --bg: #06101d;
+  --panel: rgba(14, 29, 48, .82);
+  --panel-2: rgba(25, 47, 72, .72);
+  --muted: #9eb0c7;
+  --surface-border: rgba(151, 207, 255, .13);
+  --soft-shadow: 0 16px 42px rgba(0, 0, 0, .25);
+}
+
+html { scrollbar-gutter: stable; }
+body {
+  background:
+    radial-gradient(ellipse at 12% -8%, rgba(44, 184, 255, .21), transparent 38%),
+    radial-gradient(ellipse at 90% 2%, rgba(45, 245, 138, .13), transparent 34%),
+    linear-gradient(180deg, #071422 0%, var(--bg) 45%, #050c16 100%);
+  background-attachment: fixed;
+}
+
+.app-shell { max-width: 900px; }
+.topbar {
+  margin-bottom: 4px;
+  padding: max(10px, env(safe-area-inset-top, 0px)) 2px 18px;
+}
+.brand-mark-inline {
+  box-shadow: 0 12px 32px rgba(49, 196, 225, .17), inset 0 0 0 1px rgba(255,255,255,.08);
+}
+.maker-line { color: #8195af; }
+
+.hero-card,
+.panel,
+.stat-card,
+.trend-card,
+.review-card,
+.decision-card,
+.command-card,
+.analytics-card {
+  border-color: var(--surface-border);
+  box-shadow: var(--soft-shadow), inset 0 1px 0 rgba(255,255,255,.035);
+}
+.hero-card {
+  background:
+    radial-gradient(circle at 88% 4%, rgba(55,183,255,.18), transparent 30%),
+    linear-gradient(145deg, rgba(17,38,61,.96), rgba(9,24,41,.90));
+  border-color: rgba(92, 207, 255, .21);
+}
+.hero-card::before { opacity: .1; }
+.money { text-shadow: 0 6px 34px rgba(85, 213, 255, .13); }
+.progress-wrap { box-shadow: inset 0 1px 4px rgba(0,0,0,.28); }
+.progress-bar { box-shadow: 0 0 20px rgba(45,245,138,.28); }
+
+.primary-btn,
+.scan-cta {
+  background: linear-gradient(125deg, #31f28d 0%, #32d9d7 48%, #43a8ff 100%);
+  box-shadow: 0 14px 34px rgba(45, 214, 176, .17), inset 0 1px 0 rgba(255,255,255,.42);
+}
+.scan-cta { border: 1px solid rgba(147,255,224,.33); }
+.secondary-btn,
+.ghost-btn,
+.import-btn {
+  border-color: rgba(153, 197, 232, .13);
+}
+.panel > .section-head:first-child { margin-bottom: 2px; }
+.section-head h2 { line-height: 1.12; }
+
+.tax-rate-setting {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(55,183,255,.15);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(55,183,255,.065), rgba(45,245,138,.025));
+}
+.tax-rate-setting input:disabled {
+  color: #9fb1c8;
+  -webkit-text-fill-color: #9fb1c8;
+  cursor: not-allowed;
+  opacity: .72;
+}
+.tax-rate-setting .field-note { margin-top: 0; }
+
+.history-list { gap: 16px; }
+.history-day {
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(151,207,255,.09);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(17,34,54,.62), rgba(9,22,38,.38));
+}
+.day-summary {
+  background: linear-gradient(135deg, rgba(45,245,138,.10), rgba(55,183,255,.07));
+  border-color: rgba(76,222,190,.18);
+}
+.history-item {
+  position: relative;
+  overflow: hidden;
+  padding: 15px 15px 14px 18px;
+  background: linear-gradient(145deg, rgba(31,53,78,.72), rgba(16,34,56,.63));
+  border-color: rgba(151,207,255,.10);
+}
+.platform-card { --platform-color: #91a4bc; }
+.platform-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--platform-color);
+  box-shadow: 0 0 18px var(--platform-color);
+}
+.platform-doordash { --platform-color: #ff4f5e; }
+.platform-uber-eats { --platform-color: #29d17d; }
+.platform-grubhub { --platform-color: #ff8d3a; }
+.platform-instacart { --platform-color: #65c94a; }
+.platform-amazon-flex { --platform-color: #4ca8ff; }
+.platform-spark { --platform-color: #28a9ff; }
+.platform-roadie { --platform-color: #a78bfa; }
+.platform-catering { --platform-color: #f4bd4a; }
+.platform-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 27px;
+  padding: 0 9px;
+  border: 1px solid var(--platform-color);
+  border-radius: 999px;
+  color: #f7fbff;
+  background: rgba(4,13,23,.36);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .01em;
+}
+.history-load-more { padding: 2px 4px 6px; }
+.history-load-more .secondary-btn { margin: 0; }
+
+.bottom-tabs {
+  border-color: rgba(117,191,235,.17);
+  background: linear-gradient(180deg, rgba(11,24,40,.96), rgba(5,14,26,.93));
+  box-shadow: 0 20px 50px rgba(0,0,0,.46), inset 0 1px 0 rgba(255,255,255,.05);
+}
+.tab-btn.active {
+  background: linear-gradient(135deg, #39e99a, #46b3ff);
+  box-shadow: 0 9px 24px rgba(55,183,255,.20), inset 0 1px 0 rgba(255,255,255,.36);
+}
+
+@supports (content-visibility: auto) {
+  .history-day,
+  .analytics-card {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 420px;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .history-item:hover,
+  .command-card:hover,
+  .analytics-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(106,210,255,.22);
+    box-shadow: 0 20px 44px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  .history-item,
+  .command-card,
+  .analytics-card { transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+}
+
+@media (max-width: 620px) {
+  html { scrollbar-gutter: auto; }
+  body { background-attachment: scroll; }
+  .topbar {
+    background: linear-gradient(180deg, rgba(6,16,29,.985), rgba(6,16,29,.91));
+    border-bottom-color: rgba(117,191,235,.12);
+  }
+  .history-day { margin-inline: -2px; padding: 8px; border-radius: 21px; }
+  .history-item { border-radius: 17px; }
+  .tax-rate-setting { padding: 12px; }
 }
 
 /* Phase 16 smart goal system */
@@ -1283,7 +1461,7 @@ select:focus {
   .decision-log-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); }
 }
 
-/* GigLens 4.1.0 — embedded brand mark, local OCR learning, and mobile clarity */
+/* GigLens 4.1.2 — embedded brand mark, local OCR learning, mobile clarity, and stability repair */
 .brand-mark-inline {
   display: grid;
   place-items: center;
@@ -1489,5 +1667,56 @@ select:focus {
     padding: 0 10px;
     font-size: 13px;
     border-radius: 16px;
+  }
+}
+
+/* GigLens 4.2 final cascade: keep the release polish above older compatibility layers. */
+:root {
+  --bg: #06101d;
+  --panel: rgba(14, 29, 48, .82);
+  --panel-2: rgba(25, 47, 72, .72);
+  --muted: #9eb0c7;
+  --surface-border: rgba(151, 207, 255, .13);
+  --soft-shadow: 0 16px 42px rgba(0, 0, 0, .25);
+}
+html { scrollbar-gutter: stable; }
+body {
+  background:
+    radial-gradient(ellipse at 12% -8%, rgba(44, 184, 255, .21), transparent 38%),
+    radial-gradient(ellipse at 90% 2%, rgba(45, 245, 138, .13), transparent 34%),
+    linear-gradient(180deg, #071422 0%, var(--bg) 45%, #050c16 100%);
+  background-attachment: fixed;
+}
+.app-shell { max-width: 900px; }
+.hero-card,
+.panel,
+.command-card,
+.analytics-card {
+  border-color: var(--surface-border);
+  box-shadow: var(--soft-shadow), inset 0 1px 0 rgba(255,255,255,.04);
+}
+.hero-card {
+  background:
+    radial-gradient(circle at 88% 4%, rgba(55,183,255,.18), transparent 30%),
+    linear-gradient(145deg, rgba(17,38,61,.96), rgba(9,24,41,.90));
+  border-color: rgba(92, 207, 255, .21);
+}
+.history-item {
+  background: linear-gradient(145deg, rgba(31,53,78,.72), rgba(16,34,56,.63));
+  border-color: rgba(151,207,255,.10);
+}
+.bottom-tabs {
+  border-color: rgba(117,191,235,.17);
+  background: linear-gradient(180deg, rgba(11,24,40,.96), rgba(5,14,26,.93));
+  box-shadow: 0 20px 50px rgba(0,0,0,.46), inset 0 1px 0 rgba(255,255,255,.05);
+}
+.tab-btn.active { background: linear-gradient(135deg, #39e99a, #46b3ff); }
+
+@media (max-width: 620px) {
+  html { scrollbar-gutter: auto; }
+  body { background-attachment: scroll; }
+  .topbar {
+    background: linear-gradient(180deg, rgba(6,16,29,.985), rgba(6,16,29,.91));
+    border-bottom-color: rgba(117,191,235,.12);
   }
 }

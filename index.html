@@ -16,15 +16,14 @@
   <meta name="description" content="GigLens turns gig-app screenshots into a private, local-first earnings, mileage, profit, and performance command center." />
   <title>GigLens</title>
   <link rel="manifest" href="./manifest.json" />
-  <link rel="apple-touch-icon" href="./apple-touch-icon-v410.png" />
-  <link rel="apple-touch-icon" sizes="180x180" href="./icons/giglens-icon-180-v410.png" />
-  <link rel="apple-touch-icon-precomposed" href="./icons/giglens-icon-180-v410.png" />
-  <link rel="icon" type="image/png" href="./favicon-v410.png" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./icons/giglens-icon-192-v410.png" />
-  <link rel="icon" type="image/png" sizes="512x512" href="./icons/giglens-icon-512-v410.png" />
-  <link rel="icon" type="image/png" sizes="1024x1024" href="./icons/giglens-icon-1024-v410.png" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/giglens-icon-180.png" />
+  <link rel="apple-touch-icon-precomposed" href="./icons/giglens-icon-180.png" />
+  <link rel="icon" type="image/png" href="./favicon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/giglens-icon-192.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="./icons/giglens-icon-512.png" />
+  <link rel="icon" type="image/png" sizes="1024x1024" href="./icons/giglens-icon-1024.png" />
   <link rel="stylesheet" href="./styles.css" />
-  <script defer src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" integrity="sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F" crossorigin="anonymous"></script>
   <script defer src="./app.js"></script>
 </head>
 <body>
@@ -135,7 +134,7 @@
           <article id="taxCard" class="command-card status-neutral">
             <div class="command-card-head">
               <p class="label">Tax estimate</p>
-              <span id="taxRateLabel" class="status-chip">$0.67/mi</span>
+              <span id="taxRateLabel" class="status-chip">76¢/mi · Auto</span>
             </div>
             <div class="metric-row"><span>Mileage deduction</span><strong id="taxDeduction">$0.00</strong></div>
             <div class="metric-row"><span>Tracked miles</span><strong id="taxMiles">0.0 mi</strong></div>
@@ -404,7 +403,7 @@
               <h2>Tax & Export Center</h2>
             </div>
           </div>
-          <p class="muted">Export clean local records for bookkeeping, tax prep, and backup. Tax and profit numbers are estimates based on your Settings and are not tax advice.</p>
+          <p class="muted">Export clean local records for bookkeeping, tax prep, and backup. Tax and profit numbers are estimates based on your Settings and are not tax advice. Do not claim the standard mileage deduction and the same actual vehicle expenses together.</p>
           <details class="luxury-disclosure export-disclosure">
             <summary>Export and backup tools</summary>
             <div class="luxury-disclosure-body">
@@ -591,10 +590,17 @@
             <label>Maintenance $/mile
               <input id="maintenanceInput" type="text" inputmode="decimal" autocomplete="off" placeholder="0.12" />
             </label>
-            <label>Tax mileage rate
-              <input id="taxRateInput" type="text" inputmode="decimal" autocomplete="off" placeholder="0.67" />
+            <label>Tax mileage method
+              <select id="taxRateModeInput">
+                <option value="automatic">Automatic IRS schedule</option>
+                <option value="custom">Custom fixed rate</option>
+              </select>
             </label>
           </div>
+          <label class="tax-rate-setting">Custom tax mileage rate
+            <input id="taxRateInput" type="text" inputmode="decimal" autocomplete="off" placeholder="0.760" />
+            <small id="taxRateHelp" class="field-note">Automatic uses 72.5¢/mi for Jan–Jun 2026 and 76¢/mi for Jul–Dec 2026, while preserving the saved date on each delivery.</small>
+          </label>
           <div class="two-col">
             <label>Minimum $/mile
               <input id="minPerMileInput" type="text" inputmode="decimal" autocomplete="off" placeholder="1.50" />
@@ -761,19 +767,6 @@
         </div>
       </form>
     </section>
-
-
-    <nav id="mobileActionDock" class="mobile-action-dock" aria-label="Primary driver actions">
-      <button id="dockQuickAddBtn" class="dock-action primary" data-quick-add-open type="button" aria-label="Quick add from a delivery screenshot">
-        <strong>📸</strong><span>Scan Add</span>
-      </button>
-      <button id="dockScanBtn" class="dock-action secondary-tool" data-open-add="scan" type="button" aria-label="Scan a delivery screenshot">
-        <strong>⌁</strong><span>Scan</span>
-      </button>
-      <button id="dockDecideBtn" class="dock-action secondary-tool" data-tab-jump="decide" type="button" aria-label="Open accept calculator">
-        <strong>✓</strong><span>Decide</span>
-      </button>
-    </nav>
 
     <footer class="app-credit" aria-label="App credit">Designed by Tech Phactory Solutions</footer>
 
