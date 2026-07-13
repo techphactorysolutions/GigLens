@@ -1,3 +1,9 @@
+## 4.5.0 monthly Calendar analytics
+
+The bottom of the Calendar tab now summarizes the month being viewed. It includes gross earnings, estimated profit, deliveries, miles, estimated work time, active days, gross/hour, profit/hour, average earnings per active day, mileage deduction, month-over-month changes, strongest platform, zone, hour, top earning day, daily earnings bars, and expandable platform/zone rankings.
+
+Monthly analysis uses local saved data only. Work time prefers saved Start/Pause/Resume/End shift records and falls back to screenshot timestamp session estimates when no shift record exists.
+
 ## 4.4.0 Functional minimalist UI
 GigLens now uses a cohesive mobile-first interface based on the supplied reference: clear brand/shift header, data-first earnings hero, screenshot-first action, disclosure-based secondary content, and a compact functional navigation bar. The redesign preserves Calendar, OCR learning, screenshot timestamps, History, Analytics, backups, and Settings.
 

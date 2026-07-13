@@ -1144,7 +1144,7 @@ function runPwaOfflinePolishSmoke() {
   for (const asset of ['./index.html', './styles.css', './app.js', './manifest.json', './icons/giglens-icon-192.png', './icons/giglens-icon-512.png', './apple-touch-icon.png']) {
     if (!serviceWorker.includes(`"${asset}"`)) throw new Error(`service worker should cache core app shell assets: ${asset}`);
   }
-  for (const token of ['CACHE_VERSION = "v44-functional-minimalist-ui"', 'OFFLINE_FALLBACK', 'networkFirst', 'staleWhileRevalidate', 'Tesseract CDN']) {
+  for (const token of ['CACHE_VERSION = "v45-calendar-month-analytics"', 'OFFLINE_FALLBACK', 'networkFirst', 'staleWhileRevalidate', 'Tesseract CDN']) {
     if (!serviceWorker.includes(token)) throw new Error(`service worker missing PWA offline token: ${token}`);
   }
   if (!html.includes('id="offlineBanner"') || !css.includes('offline-banner')) {
@@ -1945,6 +1945,83 @@ function runPublicSecretScanSmoke() {
 }
 
 
+
+function runCalendarMonthAnalyticsSmoke() {
+  const now = new Date();
+  const currentOne = new Date(now.getFullYear(), now.getMonth(), 4, 10, 15, 0, 0).toISOString();
+  const currentTwo = new Date(now.getFullYear(), now.getMonth(), 12, 18, 30, 0, 0).toISOString();
+  const previous = new Date(now.getFullYear(), now.getMonth() - 1, 9, 12, 0, 0, 0).toISOString();
+  const rows = [
+    {
+      id: 'month-current-1',
+      company: 'DoorDash',
+      earnings: 20,
+      miles: 5,
+      minutes: 30,
+      zone: 'South City',
+      createdAt: currentOne,
+      updatedAt: currentOne,
+      source: 'manual',
+      deleted: false,
+      version: 16
+    },
+    {
+      id: 'month-current-2',
+      company: 'DoorDash',
+      earnings: 30,
+      miles: 6,
+      minutes: 45,
+      zone: 'South City',
+      createdAt: currentTwo,
+      updatedAt: currentTwo,
+      source: 'ocr',
+      deleted: false,
+      version: 16
+    },
+    {
+      id: 'month-previous-1',
+      company: 'Uber Eats',
+      earnings: 25,
+      miles: 5,
+      minutes: 40,
+      zone: 'Downtown',
+      createdAt: previous,
+      updatedAt: previous,
+      source: 'manual',
+      deleted: false,
+      version: 16
+    }
+  ];
+  const harness = createHarness({
+    'giglens.deliveries.v1': JSON.stringify(rows)
+  });
+  vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
+
+  const kpis = harness.elements.get('calendarMonthKpis').innerHTML;
+  const trend = harness.elements.get('calendarMonthTrend').innerHTML;
+  const leaders = harness.elements.get('calendarMonthLeaders').innerHTML;
+  const chart = harness.elements.get('calendarMonthDailyChart').innerHTML;
+  const platforms = harness.elements.get('calendarMonthPlatformList').innerHTML;
+
+  if (!kpis.includes('$50.00') || !kpis.includes('2') || !kpis.includes('11.0 mi')) {
+    throw new Error(`calendar monthly KPIs did not render expected totals: ${kpis}`);
+  }
+  if (!trend.includes('Earnings vs') || !trend.includes('Up 100%')) {
+    throw new Error(`calendar monthly trend did not compare previous month: ${trend}`);
+  }
+  if (!leaders.includes('DoorDash') || !leaders.includes('South City')) {
+    throw new Error(`calendar monthly leaders did not render platform and zone: ${leaders}`);
+  }
+  if (!chart.includes('$20.00') || !chart.includes('$30.00')) {
+    throw new Error(`calendar daily earnings chart did not render active days: ${chart}`);
+  }
+  if (!platforms.includes('DoorDash') || !platforms.includes('$50.00')) {
+    throw new Error(`calendar monthly platform ranking missing expected data: ${platforms}`);
+  }
+  console.log('calendar monthly analytics cases passed');
+}
+
+
 async function main() {
   runStartup({
     'giglens.deliveries.v1': '{"not":"an array"}',
@@ -1960,6 +2037,7 @@ async function main() {
   await runDecisionAssistantSmoke();
   await runOCRReviewSmoke();
   await runCalendarTimestampSmoke();
+  runCalendarMonthAnalyticsSmoke();
   await runQuickScreenshotAddSmoke();
   await runOCRLearningSmoke();
   await runScreenshotAccentSmoke();

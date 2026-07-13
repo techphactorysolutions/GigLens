@@ -446,6 +446,36 @@
           <p id="calendarWorkNote" class="muted small">Work time uses saved shift breaks when available; otherwise it is estimated from screenshot timestamps and order durations.</p>
           <div id="calendarDayList" class="history-list empty">No deliveries saved for this day.</div>
         </section>
+
+        <section id="calendarMonthAnalytics" class="panel calendar-month-analytics">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Monthly analysis</p>
+              <h2 id="calendarAnalyticsMonthLabel">Month overview</h2>
+            </div>
+          </div>
+          <p id="calendarMonthInsight" class="muted">Monthly insights will appear when deliveries are saved.</p>
+          <div id="calendarMonthKpis" class="calendar-month-kpis empty">No monthly data yet.</div>
+          <div id="calendarMonthTrend" class="calendar-month-trend empty">No previous-month comparison yet.</div>
+          <div id="calendarMonthLeaders" class="calendar-month-leaders empty">Best platform, zone, hour, and day will appear here.</div>
+          <section class="calendar-month-chart-section" aria-labelledby="calendarDailyChartTitle">
+            <h3 id="calendarDailyChartTitle">Daily earnings</h3>
+            <div id="calendarMonthDailyChart" class="calendar-month-daily-chart empty">No active days to chart.</div>
+          </section>
+          <details class="calendar-month-breakdowns">
+            <summary>Platform and zone breakdowns</summary>
+            <div class="calendar-month-breakdown-grid">
+              <section>
+                <h3>Platforms</h3>
+                <div id="calendarMonthPlatformList" class="calendar-month-ranking empty">No platform data yet.</div>
+              </section>
+              <section>
+                <h3>Zones</h3>
+                <div id="calendarMonthZoneList" class="calendar-month-ranking empty">No zone data yet.</div>
+              </section>
+            </div>
+          </details>
+        </section>
       </section>
 
       <section id="tab-history" class="tab-screen">

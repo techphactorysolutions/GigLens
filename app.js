@@ -203,6 +203,14 @@
     calendarNextBtn: $("calendarNextBtn"),
     calendarTodayBtn: $("calendarTodayBtn"),
     calendarAddBtn: $("calendarAddBtn"),
+    calendarAnalyticsMonthLabel: $("calendarAnalyticsMonthLabel"),
+    calendarMonthInsight: $("calendarMonthInsight"),
+    calendarMonthKpis: $("calendarMonthKpis"),
+    calendarMonthTrend: $("calendarMonthTrend"),
+    calendarMonthLeaders: $("calendarMonthLeaders"),
+    calendarMonthDailyChart: $("calendarMonthDailyChart"),
+    calendarMonthPlatformList: $("calendarMonthPlatformList"),
+    calendarMonthZoneList: $("calendarMonthZoneList"),
     smartGoalCard: $("smartGoalCard"),
     smartGoalStatus: $("smartGoalStatus"),
     smartGoalSuggestion: $("smartGoalSuggestion"),
@@ -2450,6 +2458,183 @@
       </button>`;
   }
 
+
+  function deliveriesForMonth(cursor) {
+    const year = cursor.getFullYear();
+    const month = cursor.getMonth();
+    return deliveries
+      .filter((delivery) => {
+        if (delivery.deleted) return false;
+        const date = new Date(delivery.createdAt);
+        return !Number.isNaN(date.getTime()) && date.getFullYear() === year && date.getMonth() === month;
+      })
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  }
+
+  function monthDayKeys(cursor) {
+    const year = cursor.getFullYear();
+    const month = cursor.getMonth();
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return Array.from({ length: lastDay }, (_, index) => {
+      const date = new Date(year, month, index + 1, 12, 0, 0, 0);
+      return todayKey(date);
+    });
+  }
+
+  function monthWorkSummary(cursor) {
+    let milliseconds = 0;
+    let activeDays = 0;
+    for (const key of monthDayKeys(cursor)) {
+      const rows = deliveriesForDay(key);
+      const work = workSummaryForDay(key, rows);
+      if (rows.length || work.milliseconds > 0) activeDays += 1;
+      milliseconds += Math.max(0, Number(work.milliseconds || 0));
+    }
+    return { milliseconds, activeDays };
+  }
+
+  function monthComparisonValue(current, previous) {
+    const currentValue = Number(current || 0);
+    const previousValue = Number(previous || 0);
+    if (previousValue <= 0) return null;
+    return ((currentValue - previousValue) / previousValue) * 100;
+  }
+
+  function monthTrendLabel(value) {
+    if (value === null || !Number.isFinite(value)) return "No prior comparison";
+    const rounded = Math.round(Math.abs(value));
+    if (rounded === 0) return "Flat";
+    return `${value > 0 ? "Up" : "Down"} ${rounded}%`;
+  }
+
+  function monthlyRankingHTML(groups) {
+    if (!groups.length) return "";
+    const maxEarnings = Math.max(...groups.map((group) => Number(group.earnings || 0)), 1);
+    return groups.slice(0, 5).map((group) => {
+      const width = Math.max(4, Math.min(100, (Number(group.earnings || 0) / maxEarnings) * 100));
+      return `
+        <article class="calendar-month-ranking-row">
+          <div class="calendar-month-ranking-top">
+            <strong>${escapeHTML(group.name)}</strong>
+            <span>${money.format(group.earnings)}</span>
+          </div>
+          <div class="calendar-month-bar"><span style="width:${width.toFixed(1)}%"></span></div>
+          <small>${group.count} ${group.count === 1 ? "order" : "orders"} · ${money.format(group.avgProfitPerMile)}/mi profit · ${money.format(group.avgProfitHour)}/hr profit</small>
+        </article>`;
+    }).join("");
+  }
+
+  function renderCalendarMonthAnalytics() {
+    if (!els.calendarMonthKpis) return;
+    const rows = deliveriesForMonth(calendarCursor);
+    const summary = ProfitEngine.summarizeRows(rows, { config: settings, activeShift: false });
+    const work = monthWorkSummary(calendarCursor);
+    const workHours = work.milliseconds / 3600000;
+    const grossPerHour = workHours > 0 ? summary.earnings / workHours : 0;
+    const profitPerHour = workHours > 0 ? summary.profit / workHours : 0;
+    const averagePerActiveDay = work.activeDays > 0 ? summary.earnings / work.activeDays : 0;
+    const monthName = calendarCursor.toLocaleDateString([], { month: "long", year: "numeric" });
+    const previousCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() - 1, 1);
+    const previousRows = deliveriesForMonth(previousCursor);
+    const previousSummary = ProfitEngine.summarizeRows(previousRows, { config: settings, activeShift: false });
+    const previousMonthName = previousCursor.toLocaleDateString([], { month: "long" });
+    const earningsTrend = monthComparisonValue(summary.earnings, previousSummary.earnings);
+    const profitTrend = monthComparisonValue(summary.profit, previousSummary.profit);
+    const orderTrend = monthComparisonValue(summary.orders, previousSummary.orders);
+    const platformGroups = rankedGroups(rows, "company");
+    const zoneGroups = rankedGroups(rows, "zone").filter((group) => group.name !== "Unassigned");
+    const hourGroups = rankedHourInsightGroups(rows);
+    const dayGroups = new Map();
+    for (const row of rows) {
+      const key = todayKey(new Date(row.createdAt));
+      if (!dayGroups.has(key)) dayGroups.set(key, []);
+      dayGroups.get(key).push(row);
+    }
+    const daily = [...dayGroups.entries()].map(([key, dayRows]) => {
+      const daySummary = calculateForDay(dayRows);
+      return { key, rows: dayRows, ...daySummary };
+    }).sort((a, b) => a.key.localeCompare(b.key));
+    const bestDay = [...daily].sort((a, b) => b.earnings - a.earnings || b.profit - a.profit)[0] || null;
+    const bestPlatform = platformGroups[0] || null;
+    const bestZone = zoneGroups[0] || null;
+    const bestHour = hourGroups[0] || null;
+
+    els.calendarAnalyticsMonthLabel.textContent = monthName;
+    if (!rows.length) {
+      els.calendarMonthInsight.textContent = `No delivery data has been saved for ${monthName}.`;
+      els.calendarMonthKpis.className = "calendar-month-kpis empty";
+      els.calendarMonthKpis.textContent = "Add or move deliveries into this month to unlock analysis.";
+      els.calendarMonthTrend.className = "calendar-month-trend empty";
+      els.calendarMonthTrend.textContent = "No month-over-month comparison yet.";
+      els.calendarMonthLeaders.className = "calendar-month-leaders empty";
+      els.calendarMonthLeaders.textContent = "Performance leaders will appear after data is available.";
+      els.calendarMonthDailyChart.className = "calendar-month-daily-chart empty";
+      els.calendarMonthDailyChart.textContent = "No active days to chart.";
+      els.calendarMonthPlatformList.className = "calendar-month-ranking empty";
+      els.calendarMonthPlatformList.textContent = "No platform data yet.";
+      els.calendarMonthZoneList.className = "calendar-month-ranking empty";
+      els.calendarMonthZoneList.textContent = "No zone data yet.";
+      return;
+    }
+
+    const strongestNote = bestPlatform
+      ? `${bestPlatform.name} led platform efficiency at ${money.format(bestPlatform.avgProfitPerMile)} profit per mile.`
+      : "";
+    els.calendarMonthInsight.textContent = `${work.activeDays} active ${work.activeDays === 1 ? "day" : "days"} produced ${money.format(summary.earnings)} gross and ${money.format(summary.profit)} estimated profit. ${strongestNote}`.trim();
+
+    els.calendarMonthKpis.className = "calendar-month-kpis";
+    els.calendarMonthKpis.innerHTML = `
+      <span><strong>${money.format(summary.earnings)}</strong><small>earnings</small></span>
+      <span><strong>${money.format(summary.profit)}</strong><small>estimated profit</small></span>
+      <span><strong>${summary.orders}</strong><small>orders</small></span>
+      <span><strong>${summary.miles.toFixed(1)} mi</strong><small>business miles</small></span>
+      <span><strong>${compactDuration(work.milliseconds)}</strong><small>work time</small></span>
+      <span><strong>${work.activeDays}</strong><small>active days</small></span>
+      <span><strong>${money.format(grossPerHour)}/hr</strong><small>gross pace</small></span>
+      <span><strong>${money.format(profitPerHour)}/hr</strong><small>profit pace</small></span>
+      <span><strong>${money.format(averagePerActiveDay)}</strong><small>avg per active day</small></span>
+      <span><strong>${money.format(summary.taxDeduction)}</strong><small>mileage deduction</small></span>`;
+
+    els.calendarMonthTrend.className = "calendar-month-trend";
+    els.calendarMonthTrend.innerHTML = `
+      <div><span>Earnings vs ${escapeHTML(previousMonthName)}</span><strong>${monthTrendLabel(earningsTrend)}</strong></div>
+      <div><span>Profit vs ${escapeHTML(previousMonthName)}</span><strong>${monthTrendLabel(profitTrend)}</strong></div>
+      <div><span>Orders vs ${escapeHTML(previousMonthName)}</span><strong>${monthTrendLabel(orderTrend)}</strong></div>`;
+
+    els.calendarMonthLeaders.className = "calendar-month-leaders";
+    els.calendarMonthLeaders.innerHTML = `
+      <article><span>Best platform</span><strong>${bestPlatform ? escapeHTML(bestPlatform.name) : "—"}</strong><small>${bestPlatform ? `${money.format(bestPlatform.avgProfitPerMile)}/mi profit` : "Needs data"}</small></article>
+      <article><span>Best zone</span><strong>${bestZone ? escapeHTML(bestZone.name) : "—"}</strong><small>${bestZone ? `${money.format(bestZone.avgProfitPerMile)}/mi profit` : "Add zones"}</small></article>
+      <article><span>Strongest hour</span><strong>${bestHour ? escapeHTML(bestHour.name) : "—"}</strong><small>${bestHour ? `${money.format(bestHour.avgProfitHour)}/hr profit` : "Needs timestamps"}</small></article>
+      <article><span>Top earning day</span><strong>${bestDay ? escapeHTML(dateLabel(bestDay.key)) : "—"}</strong><small>${bestDay ? money.format(bestDay.earnings) : "Needs data"}</small></article>`;
+
+    const maxDaily = Math.max(...daily.map((day) => Number(day.earnings || 0)), 1);
+    els.calendarMonthDailyChart.className = "calendar-month-daily-chart";
+    els.calendarMonthDailyChart.innerHTML = daily.map((day) => {
+      const date = dateFromDayKey(day.key);
+      const width = Math.max(3, Math.min(100, (Number(day.earnings || 0) / maxDaily) * 100));
+      return `
+        <article class="calendar-daily-row">
+          <span>${date.toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+          <div class="calendar-month-bar"><span style="width:${width.toFixed(1)}%"></span></div>
+          <strong>${money.format(day.earnings)}</strong>
+        </article>`;
+    }).join("");
+
+    els.calendarMonthPlatformList.className = "calendar-month-ranking";
+    els.calendarMonthPlatformList.innerHTML = monthlyRankingHTML(platformGroups);
+    if (!platformGroups.length) {
+      els.calendarMonthPlatformList.className = "calendar-month-ranking empty";
+      els.calendarMonthPlatformList.textContent = "No platform data yet.";
+    }
+    els.calendarMonthZoneList.className = "calendar-month-ranking";
+    els.calendarMonthZoneList.innerHTML = monthlyRankingHTML(zoneGroups);
+    if (!zoneGroups.length) {
+      els.calendarMonthZoneList.className = "calendar-month-ranking empty";
+      els.calendarMonthZoneList.textContent = "Add zones to compare monthly performance.";
+    }
+  }
+
   function renderCalendar() {
     if (!els.calendarGrid) return;
     const year = calendarCursor.getFullYear();
@@ -2466,6 +2651,7 @@
     }
     els.calendarGrid.innerHTML = cells.join("");
     renderSelectedCalendarDay();
+    renderCalendarMonthAnalytics();
   }
 
   function renderSelectedCalendarDay() {

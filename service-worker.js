@@ -1,5 +1,5 @@
-const CACHE_VERSION = "v44-functional-minimalist-ui";
-const CACHE_NAME = "giglens-v44-functional-minimalist-ui";
+const CACHE_VERSION = "v45-calendar-month-analytics";
+const CACHE_NAME = "giglens-v45-calendar-month-analytics";
 const OFFLINE_FALLBACK = "./index.html";
 const CORE_ASSETS = [
   "./",

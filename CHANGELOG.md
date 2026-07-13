@@ -1,3 +1,14 @@
+## 4.5.0 — Calendar monthly analytics
+
+- Added a full monthly analysis section to the bottom of the Calendar tab.
+- Added monthly earnings, estimated profit, orders, miles, work time, active days, gross/hour, profit/hour, average per active day, and mileage-deduction KPIs.
+- Added month-over-month earnings, profit, and order trends.
+- Added monthly best platform, best zone, strongest hour, and top earning day.
+- Added daily earnings bars for every active day in the selected month.
+- Added expandable platform and zone breakdowns using the selected month's saved data only.
+- Monthly work time uses saved shift data when available and screenshot-session estimates otherwise.
+- Bumped package version to `4.5.0` and service-worker cache to `giglens-v45-calendar-month-analytics`.
+
 ## 4.4.0 — Functional minimalist UI redesign
 - Rebuilt the interface around the supplied mobile reference and strict functional-minimalism rules.
 - Removed redundant mobile Add navigation while preserving manual entry through More tools and Calendar.

@@ -84,7 +84,7 @@ class GigLensStaticAppTests(unittest.TestCase):
         self.assertIn('./manifest.json', cached_assets)
         self.assertIn('./icons/giglens-icon-192.png', cached_assets)
         self.assertIn('./icons/giglens-icon-512.png', cached_assets)
-        self.assertIn('CACHE_VERSION = "v44-functional-minimalist-ui"', self.service_worker)
+        self.assertIn('CACHE_VERSION = "v45-calendar-month-analytics"', self.service_worker)
         self.assertIn('OFFLINE_FALLBACK = "./index.html"', self.service_worker)
         self.assertIn('networkFirst(request)', self.service_worker)
         self.assertIn('staleWhileRevalidate(request)', self.service_worker)
@@ -554,7 +554,7 @@ class GigLensStaticAppTests(unittest.TestCase):
         for token in [
             'apple-mobile-web-app-capable', 'application-name', 'color-scheme',
             'offline-banner', 'Offline mode is active', 'updateNetworkStatus',
-            'serviceWorker', 'giglens-v44-functional-minimalist-ui', 'OFFLINE_FALLBACK',
+            'serviceWorker', 'giglens-v45-calendar-month-analytics', 'OFFLINE_FALLBACK',
             'cacheCoreAssets', 'deleteOldCaches', 'staleWhileRevalidate',
             'screenshot OCR may need internet', 'OCR library is not loaded yet'
         ]:
@@ -942,6 +942,37 @@ class GigLensStaticAppTests(unittest.TestCase):
         self.assertIn('Calendar and Screenshot Timestamp Audit', (PROJECT_ROOT / 'CALENDAR_TIMESTAMP_AUDIT.md').read_text(encoding='utf-8'))
 
 
+
+    def test_calendar_monthly_analytics_exist(self):
+        for element_id in [
+            'calendarMonthAnalytics',
+            'calendarAnalyticsMonthLabel',
+            'calendarMonthInsight',
+            'calendarMonthKpis',
+            'calendarMonthTrend',
+            'calendarMonthLeaders',
+            'calendarMonthDailyChart',
+            'calendarMonthPlatformList',
+            'calendarMonthZoneList',
+        ]:
+            self.assertIn(element_id, self.parser.ids)
+
+        for token in [
+            'deliveriesForMonth',
+            'monthDayKeys',
+            'monthWorkSummary',
+            'monthComparisonValue',
+            'monthTrendLabel',
+            'monthlyRankingHTML',
+            'renderCalendarMonthAnalytics',
+        ]:
+            self.assertIn(token, self.app_js)
+
+        self.assertIn('4.5.0 Calendar monthly analysis', self.css)
+        self.assertTrue((PROJECT_ROOT / 'MONTHLY_CALENDAR_ANALYTICS_AUDIT.md').is_file())
+        smoke = (PROJECT_ROOT / 'tools' / 'smoke-startup.js').read_text(encoding='utf-8')
+        self.assertIn('calendar monthly analytics cases passed', smoke)
+
     def test_v440_functional_minimalist_ui_redesign_exists(self):
         combined = self.html + self.css
         for token in [
@@ -961,8 +992,8 @@ class GigLensStaticAppTests(unittest.TestCase):
 
     def test_current_release_metadata_and_docs_exist(self):
         package = json.loads((PROJECT_ROOT / 'package.json').read_text(encoding='utf-8'))
-        self.assertEqual(package.get('version'), '4.4.0')
-        self.assertIn('v44-functional-minimalist-ui', self.service_worker)
+        self.assertEqual(package.get('version'), '4.5.0')
+        self.assertIn('v45-calendar-month-analytics', self.service_worker)
         self.assertIn('Designed by Tech Phactory Solutions', self.html)
         self.assertIn('app-credit', self.html)
         self.assertIn('maker-line', self.html)
@@ -974,7 +1005,7 @@ class GigLensStaticAppTests(unittest.TestCase):
         for token in ['v3 Release Candidate', 'Manual QA checklist', 'Known limitations', 'GitHub Pages']:
             self.assertIn(token, readme)
         self.assertIn('Final Release Audit', audit)
-        self.assertIn('4.4.0', changelog)
+        self.assertIn('4.5.0', changelog)
 
 
     def test_luxury_refinement_and_restaurant_ocr_exist(self):

@@ -1,3 +1,9 @@
+## 4.5.0 Calendar monthly analytics audit
+
+The Calendar tab now renders analysis for the month currently being viewed. All metrics are derived from local saved deliveries, shift records, screenshot timestamps, settings, and the centralized Profit Engine. Empty months show safe empty states, previous-month comparisons avoid divide-by-zero output, and no external analytics service or backend was added.
+
+Coverage includes monthly KPIs, month-over-month trend labels, best platform/zone/hour/day, daily earnings bars, platform and zone rankings, work-time aggregation, DOM wiring, syntax, smoke behavior, PWA cache versioning, and public secret scanning.
+
 ## 4.4.0 functional minimalist UI redesign audit
 The full GigLens interface was restyled to match the supplied mobile reference while preserving every real workflow. Mobile navigation now prioritizes Today, Calendar, Decide, History, and Settings; Manual Entry and Analytics remain accessible through More tools. No decorative status dots, fake indicators, or nonfunctional widgets were added. See `UI_REDESIGN_AUDIT.md`.
 
