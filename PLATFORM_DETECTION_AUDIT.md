@@ -1,13 +1,5 @@
 # GigLens Platform Detection Audit
 
-## v4.2.1 explicit qualification and non-guess audit
-
-The v4.2.0 weighted detector still allowed a platform to win with any positive score. That made isolated generic words look app-specific: `trip` could become Uber Eats, `gig` Roadie, `Walmart` Spark, `catering` Catering, `batch` plus `replacement` Instacart, `accept offer` Grubhub, and `guaranteed` plus `decline` DoorDash.
-
-Version 4.2.1 separates scoring from qualification. A company is returned only after direct identity or a distinctive workflow rule verifies the winner. DoorDash's combined `Deliver by` / `Customer dropoff` and Uber Eats' `Exclusive` / guaranteed-total layouts preserve support for the supplied examples. Spark requires `Spark Driver`, a visible `Spark` identity with a delivery workflow, or a distinctive Round Robin/Walmart workflow; `Walmart` alone is insufficient. Amazon requires Amazon/Flex or a delivery-block workflow; Roadie and catering providers require direct service identity. Conflicting direct brands and close unbranded matches remain `Other`, and accent color cannot resolve an explicit text conflict.
-
-The executable suite adds ten negative/conflict cases, positive DoorDash/Uber/Spark workflow cases, text-conflict-versus-accent coverage, and bounded color-decoder cases. Accent color continues to provide supporting confidence only and never qualifies a company alone.
-
 ## v4.2.0 conservative visual evidence and learning isolation
 
 The v4.1.2 scan path retained text fingerprints but no longer passed screenshot-pixel evidence into OCR parsing. Version 4.2 restores lower-screen accent sampling in parallel with both Quick Scan and full scan, with stricter gates than a color-only classifier:

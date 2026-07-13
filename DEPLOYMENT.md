@@ -1,6 +1,6 @@
 # GigLens GitHub Pages Deployment
 
-GigLens 4.2.1 is a static, local-first PWA. It does not require a backend, database server, API key, password, environment variable, or build command.
+GigLens 4.2.0 is a static, local-first PWA. It does not require a backend, database server, API key, password, environment variable, or build command.
 
 ## Publish from an iPhone or iPad
 
@@ -77,7 +77,7 @@ iOS caches Home Screen artwork aggressively. If an older shortcut still shows th
 
 ### The app shows an old version
 
-Wait for the current Pages deployment to finish, reload the Safari page, and close/reopen the Home Screen app. GigLens 4.2.1 uses the `giglens-v421-giglens-bug-fix` service-worker cache and deletes older GigLens/DriveLedger caches during activation.
+Wait for the current Pages deployment to finish, reload the Safari page, and close/reopen the Home Screen app. GigLens 4.3.0 uses the `giglens-v43-giglens-calendar-timestamps` service-worker cache and deletes older GigLens/DriveLedger caches during activation.
 
 ### Screenshot OCR cannot load
 
@@ -94,3 +94,7 @@ npm run syntax
 npm run smoke
 npm test
 ```
+
+
+## 4.4.0 cache note
+After publishing the full release, reload once online so `giglens-v44-functional-minimalist-ui` replaces the older cached shell.

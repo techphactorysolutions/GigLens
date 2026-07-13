@@ -1,5 +1,5 @@
-const CACHE_VERSION = "v421-giglens-bug-fix";
-const CACHE_NAME = "giglens-v421-giglens-bug-fix";
+const CACHE_VERSION = "v44-functional-minimalist-ui";
+const CACHE_NAME = "giglens-v44-functional-minimalist-ui";
 const OFFLINE_FALLBACK = "./index.html";
 const CORE_ASSETS = [
   "./",
@@ -41,13 +41,8 @@ function isSameOrigin(request) {
 async function networkFirst(request) {
   try {
     const response = await fetch(request);
-    if (response.ok) {
-      await cachePutSafe(request, response);
-      return response;
-    }
-    return (await caches.match(request, { ignoreSearch: true }))
-      || (await caches.match(OFFLINE_FALLBACK))
-      || response;
+    await cachePutSafe(request, response);
+    return response;
   } catch (error) {
     return (await caches.match(request, { ignoreSearch: true }))
       || (await caches.match(OFFLINE_FALLBACK))
@@ -62,7 +57,7 @@ async function staleWhileRevalidate(request) {
       await cachePutSafe(request, response);
       return response;
     })
-    .catch(() => cached || Response.error());
+    .catch(() => cached);
   return cached || network;
 }
 

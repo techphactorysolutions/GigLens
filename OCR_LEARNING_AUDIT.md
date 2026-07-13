@@ -1,6 +1,6 @@
 # GigLens OCR Learning Audit
 
-Release: 4.2.1
+Release: 4.2.0
 
 GigLens learns only from fields the driver reviews and saves. The local learning profile is stored under `giglens.ocrLearning.v1` and is capped at 120 records.
 
@@ -16,4 +16,4 @@ The screenshot file and screenshot pixels are not stored in the learning profile
 
 Users can reset scanner learning under Settings without deleting deliveries. Learning data is included in JSON backup/import, rollback, emergency restore, storage measurement, and Clear All Local Data.
 
-The 4.2.1 accent sampler processes a downscaled lower region in memory, caps the sample canvas at 260px high, and abandons optional bitmap decoding after six seconds. A late bitmap is closed. Pixel data is not persisted, and delayed color analysis cannot block completed text OCR. OCR still loads on demand, rejects oversized/non-image inputs, bounds worker cleanup, and ignores stale concurrent results; none of those controls persist additional screenshot content.
+The 4.2 accent sampler processes a downscaled lower region in memory and does not persist pixel data. OCR still loads on demand, rejects oversized/non-image inputs, bounds worker cleanup, and ignores stale concurrent results; none of those controls persist additional screenshot content.

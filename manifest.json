@@ -1,7 +1,7 @@
 {
   "name": "GigLens Driver Command Center",
   "short_name": "GigLens",
-  "description": "Private, local-first gig-driver profit tracker, screenshot scanner, mileage ledger, earnings dashboard, and order decision assistant.",
+  "description": "Private, local-first gig-driver profit tracker, screenshot scanner, calendar history, work-time estimator, mileage ledger, earnings dashboard, and order decision assistant.",
   "id": "./",
   "start_url": "./",
   "scope": "./",

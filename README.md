@@ -1,10 +1,13 @@
-## 4.2.1 qualified screenshot detection and reliability fixes
+## 4.4.0 Functional minimalist UI
+GigLens now uses a cohesive mobile-first interface based on the supplied reference: clear brand/shift header, data-first earnings hero, screenshot-first action, disclosure-based secondary content, and a compact functional navigation bar. The redesign preserves Calendar, OCR learning, screenshot timestamps, History, Analytics, backups, and Settings.
 
-GigLens now requires distinctive app identity or workflow evidence before assigning a company. Generic OCR text such as `trip`, `gig`, `Walmart`, `catering`, `batch`, `replacement`, `accept offer`, or `guaranteed` stays reviewable as `Other`; conflicting direct app names also stay `Other` even when the screenshot accent favors one app. The supplied layouts remain supported through the combined DoorDash `Deliver by` / `Customer dropoff` pattern and Uber Eats `Exclusive` / guaranteed-total pattern. A visible `Spark` identity plus a delivery workflow is recognized, while `Walmart` alone is not treated as proof of Spark.
+Current release: `4.4.0`.
 
-Optional screenshot accent analysis can no longer hold completed OCR open indefinitely: bitmap decoding has a six-second boundary and sampling is capped to a 260px-high canvas. The service worker now falls back to the cached app shell for failed and non-OK navigations, and returns a real error response when neither network nor cache can satisfy a request. No backend, framework, build step, new data field, or schema migration was added.
+## 4.3.0 Calendar and screenshot timestamps
 
-Release verification: JavaScript syntax passed, the executable startup/OCR/PWA smoke suite passed, and all `42/42` Python regressions passed. Desktop and 390×844 browser QA passed with no console errors, no horizontal overflow, no duplicate mobile dock, five visible mobile navigation actions, and no visible broken images. All `11/11` locally served shell, script, manifest, service-worker, and icon paths returned HTTP 200.
+GigLens now includes a Calendar tab for browsing and correcting prior days. Screenshot OCR can read common date/time layouts, including iPhone status-bar text such as `5:27 PM Sun Jul 5`, numeric dates, named months, `Today`, and `Yesterday`. The screenshot file date is used only as a reviewable fallback when OCR cannot read a complete timestamp.
+
+Each delivery stores timestamp provenance and confidence. Saved shift Start/Pause/Resume/End data is used as the preferred work-time source; otherwise GigLens estimates work sessions from delivery timestamps and durations with a 75-minute idle-gap threshold. This is an estimate, not guaranteed payroll-grade timekeeping, so historical date/time fields remain editable.
 
 ## 4.2.0 audited command-center release
 
@@ -40,9 +43,9 @@ The in-app logo is now embedded directly in the page, eliminating the broken-ima
 
 GigLens is a private, local-first command center for drivers who run several gig apps at once. Its fastest workflow is: take an offer or completed-delivery screenshot, scan it, review the detected app/merchant/pay/miles/time, and save it while the day is still moving. Saved deliveries then power earnings, estimated profit, mileage deduction, hourly pace, platform, zone, shift, and accept/decline analytics.
 
-Current release: `4.2.1`.
+Current release: `4.3.0`.
 
-Release verification: JavaScript syntax passed; the expanded executable browser-mock smoke suite passed; all `42/42` Python regressions passed; the supplied Uber/DoorDash screenshot accent calibration passed; desktop and 390×844 iPhone browser QA passed with no console errors; canonical icon validation and public-secret scanning passed.
+Release verification: JavaScript syntax passed; the expanded executable browser-mock smoke suite passed; all `43/43` Python regressions passed; the supplied Uber/DoorDash screenshot accent calibration passed; desktop and 390×844 iPhone browser QA passed with no console errors; canonical icon validation and public-secret scanning passed.
 
 ## 4.0.1 icon and OCR recovery repair
 
@@ -103,7 +106,7 @@ GigLens is a local-first Progressive Web App for gig delivery drivers. It tracks
 
 ## Current release
 
-Version: `4.2.1`, built on the v4.1.2 stability package and v4.2.0 audit pass.
+Version: `4.3.0`, built on the v4.2.0 audited command-center package.
 
 This release preserves the static PWA architecture. There is no backend, database server, framework, build step, or account system. The app runs from plain static files and stores user data locally in the browser.
 

@@ -1,47 +1,11 @@
-## GigLens 4.2.1 remaining-bug audit and repair
+## 4.4.0 functional minimalist UI redesign audit
+The full GigLens interface was restyled to match the supplied mobile reference while preserving every real workflow. Mobile navigation now prioritizes Today, Calendar, Decide, History, and Settings; Manual Entry and Analytics remain accessible through More tools. No decorative status dots, fake indicators, or nonfunctional widgets were added. See `UI_REDESIGN_AUDIT.md`.
 
-This pass re-audited the v4.2.0 runtime and test harness without changing GigLens's static, local-first architecture. The fixes are deliberately narrow and retain data schema `15`, backup schema `16`, all existing storage keys, and every working feature.
+## 4.3.0 calendar and timestamp audit
 
-### Confirmed findings and repairs
+Scope: add a real Calendar workflow and date/time-aware screenshot history without introducing a backend or changing the local-first architecture. The Calendar reads normalized local deliveries, allows historical corrections through the existing edit flow, and uses saved shift breaks when available. When shift records are unavailable, GigLens estimates work sessions from screenshot timestamps and delivery durations using a conservative 75-minute session-gap rule. OCR timestamp results remain editable because status bars, app deadlines, and compressed screenshots can be ambiguous.
 
-- **Generic OCR tokens could still qualify a platform.** Positive scores from broad words such as `trip`, `gig`, `Walmart`, `catering`, `batch`, `replacement`, `accept offer`, or `guaranteed` could select Uber Eats, Roadie, Spark, Catering, Instacart, Grubhub, or DoorDash without proving the source app. `detectPlatformDetailed()` now applies explicit per-platform qualification rules after scoring. Unsupported evidence intentionally returns editable `Other`.
-- **Conflicting or nearly tied evidence could still look authoritative.** Two direct app brands now force review, including lower-weight identities such as `Dasher` or `CaterValley`, and close unbranded workflow scores remain `Other`. Accent color cannot resolve an explicit text conflict. A direct qualified brand or distinctive workflow still wins normal OCR noise.
-- **A readable Spark header was unnecessarily strict.** `Spark Driver` still qualifies directly, and `Spark` now qualifies when paired with a delivery workflow. `Walmart` by itself remains insufficient.
-- **The supplied app layouts needed strict positive coverage.** DoorDash can qualify from the combined `Deliver by` and `Customer dropoff` workflow; Uber Eats can qualify from `Exclusive` plus its guaranteed/total offer layout. These patterns are executable regressions rather than display-only examples.
-- **Optional color decoding could stall completed OCR.** `createImageBitmap()` now has a six-second boundary, late bitmaps are closed, and the sample canvas is capped at 260px high. Accent evidence remains optional and cannot label a screenshot by itself.
-- **Offline handling missed two failure modes.** A non-OK navigation response now falls back to the cached request or app shell, while a stale-while-revalidate miss now resolves to `Response.error()` instead of an invalid `undefined` response.
-
-### Files changed
-
-`app.js`, `service-worker.js`, `package.json`, `tools/smoke-startup.js`, `tests/test_static_app.py`, `README.md`, `AUDIT_REPORT.md`, `CHANGELOG.md`, `DEPLOYMENT.md`, `SECURITY_AUDIT.md`, `OCR_LEARNING_AUDIT.md`, and `PLATFORM_DETECTION_AUDIT.md`.
-
-### Automated verification
-
-- `node --check app.js`, `service-worker.js`, and `404.js`: passed.
-- `node tools/smoke-startup.js`: passed.
-- `python -m unittest discover -s tests -v`: `42/42` passed.
-- Executable detection coverage includes the supported platform fingerprints, supplied DoorDash/Uber workflow layouts, a branded Spark workflow, ten generic/conflicting non-guess cases, text conflict versus accent handling, bounded accent decoding, stale-scan protection, merchant/store parsing, shift timing, tax calculations, imports/exports, visible-action wiring, canonical icons, offline-cache paths, and public-secret scanning.
-- In-app browser QA passed on desktop and at 390×844: Start/Pause/Resume/End, Quick Add open/close, and automatic/custom tax control state all worked; mobile exposed five navigation actions, no duplicate dock, and no horizontal overflow; no visible broken images or browser console errors were found.
-- Local HTTP verification: `11/11` shell, JavaScript, stylesheet, manifest, service-worker, fallback-script, Apple/favicons, and canonical manifest-icon paths returned `200`.
-
-### Remaining risks
-
-- OCR remains heuristic. Cropped, dark-mode, compressed, low-text, or newly redesigned gig-app screenshots may intentionally require manual company selection.
-- Accent colors are supporting evidence only. Theme changes or image-decoder limitations may remove color support without preventing text OCR and manual review.
-- First-use OCR still depends on pinned public Tesseract resources; ordinary tracking and the cached shell remain local-first.
-- Browser storage can be cleared by the user, OS, or origin change. JSON backups remain important.
-- Real iPhone installation, Safari image-picker/OCR performance, Share Sheet behavior, and the deployed GitHub Pages service-worker update still require device-level QA.
-
-### Manual QA checklist
-
-1. Export a JSON backup, deploy every v4.2.1 file together, reload once, then close and reopen the installed PWA.
-2. Scan clear DoorDash and Uber Eats offer screenshots and verify the app, merchant, pay, miles, and time before saving.
-3. Scan generic text containing `trip`, `gig`, `Walmart`, `catering`, `batch`, or `guaranteed`; confirm Company remains `Other` until selected manually.
-4. Scan screenshots containing two app names or uncertain mixed evidence; confirm no company is silently assigned.
-5. Test Start Day, Pause, Resume, and End Day; confirm break time is excluded from active hours.
-6. Test Quick Add, Manual Add, history edit/duplicate/delete/undo, calculator decisions, CSV export, JSON backup/import, and rollback.
-7. Load once online, switch to Airplane Mode, and confirm the shell and local records reopen. First-use OCR may still require connectivity.
-8. On iPhone, remove any stale shortcut, add GigLens again from Safari, and confirm the Home Screen icon and safe-area layout.
+Verification: JavaScript syntax passed, the executable browser-mock smoke suite passed, all 43 Python regression tests passed, icon/manifest references passed, and the public secret scan found no exposed credentials.
 
 ## GigLens 4.2.0 full audit, repair, and UI/performance pass
 

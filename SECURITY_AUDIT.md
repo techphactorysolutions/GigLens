@@ -1,4 +1,4 @@
-# GigLens 4.2.1 Public Exposure Audit
+# GigLens 4.2.0 Public Exposure Audit
 
 ## Result
 
@@ -6,7 +6,7 @@ The release contains no detected API keys, passwords, private keys, bearer token
 
 GigLens is safe to publish as a static GitHub Pages repository from a secrets-exposure standpoint.
 
-The 4.2 audit also removed redundant icon copies and dead rendered mobile-dock markup, re-ran the public-secret scan across runtime/package documents, and preserved the existing CSP, SRI-pinned OCR loader, no-referrer policy, same-origin cache boundary, escaped dynamic text, and normalized import path. Version 4.2.1 repairs offline fallback behavior without widening that same-origin cache boundary or adding a remote endpoint. No code audit can guarantee that a future malicious commit or compromised GitHub account cannot alter a public static site; repository access controls remain part of the security boundary.
+The 4.2 audit also removed redundant icon copies and dead rendered mobile-dock markup, re-ran the public-secret scan across runtime/package documents, and preserved the existing CSP, SRI-pinned OCR loader, no-referrer policy, same-origin cache boundary, escaped dynamic text, and normalized import path. No code audit can guarantee that a future malicious commit or compromised GitHub account cannot alter a public static site; repository access controls remain part of the security boundary.
 
 ## Runtime network use
 

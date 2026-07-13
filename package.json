@@ -1,8 +1,8 @@
 {
   "name": "giglens-pwa",
-  "version": "4.2.1",
+  "version": "4.4.0",
   "private": true,
-  "description": "GigLens 4.2.1 static PWA with qualified multi-app screenshot detection, bounded visual analysis, resilient shift breaks, date-aware mileage deductions, progressive history, local analytics, backups, and decision tracking.",
+  "description": "GigLens 4.4 local-first PWA with a functional-minimalist mobile UI, calendar history, screenshot timestamps, OCR learning, analytics, backups, and decision tracking.",
   "scripts": {
     "test": "python -m unittest discover -s tests",
     "syntax": "node --check app.js && node --check service-worker.js && node --check 404.js",

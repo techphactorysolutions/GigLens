@@ -1,13 +1,23 @@
-## 4.2.1 — Qualified app detection, bounded screenshot analysis, and offline fallback repair
+## 4.4.0 — Functional minimalist UI redesign
+- Rebuilt the interface around the supplied mobile reference and strict functional-minimalism rules.
+- Removed redundant mobile Add navigation while preserving manual entry through More tools and Calendar.
+- Added meaningful SVG navigation icons and a five-destination mobile navigation hierarchy.
+- Kept Analytics accessible through More tools while retaining the full desktop tab set.
+- Reworked the header, earnings hero, scan action, forms, disclosures, Calendar, History, Analytics, Settings, and bottom sheet into one coherent design system.
+- Removed decorative visual noise and reserved accent colors for real actions or data states.
+- Added `UI_REDESIGN_AUDIT.md`, bumped package to 4.4.0, and cache to `giglens-v44-functional-minimalist-ui`.
 
-- Added per-platform qualification gates so generic words such as `trip`, `gig`, `Walmart`, `catering`, `batch`, `replacement`, `accept offer`, or `guaranteed` cannot silently label a screenshot.
-- Kept distinctive supplied-layout evidence working: DoorDash can qualify from `Deliver by` plus `Customer dropoff`, and Uber Eats can qualify from `Exclusive` plus the guaranteed/total offer layout.
-- Added direct-brand conflict handling and close unbranded-score handling; uncertain screenshots remain editable as `Other`, and accent color cannot resolve an explicit text conflict.
-- Recognized a visible `Spark` identity when it appears with a delivery workflow while continuing to reject `Walmart` alone.
-- Bounded optional accent analysis with a 6-second bitmap timeout and a 260px sample-height cap so color decoding cannot stall completed OCR or allocate an oversized canvas.
-- Repaired service-worker fallback behavior for non-OK navigation responses and complete network/cache failures.
-- Bumped the package to `4.2.1` and the cache to `giglens-v421-giglens-bug-fix`. Data schema `15` and backup schema `16` are unchanged.
-- Expanded executable regressions for valid DoorDash/Uber/Spark layouts, ten generic/conflicting non-guess cases, text-conflict versus accent handling, stalled image decoding, canvas bounds, and offline fallback paths.
+## 4.3.0 — Calendar history and screenshot timestamp intelligence
+
+- Added a dedicated Calendar tab for browsing earnings, miles, estimated profit, and work time by day.
+- Added previous/next month navigation, selected-day summaries, historical add, edit, duplicate, and delete workflows.
+- Added OCR date/time parsing for iPhone status-bar layouts, numeric dates, named months, Today, and Yesterday.
+- Screenshot scans now use image file time as a reviewable fallback when OCR cannot read a complete timestamp.
+- Added editable date/time fields to full OCR review, Quick Add, and manual delivery entry.
+- Historical saves route to the matching Calendar day instead of appearing as if they were added today.
+- Added timestamp provenance (`ocr`, `file`, `manual`, `saved`, or `import`) and confidence metadata to delivery records and backups.
+- Added screenshot-session work-time estimation with a 75-minute gap threshold, while saved shift/break data remains authoritative when available.
+- Bumped data schema to 16, backup schema to 17, package to 4.3.0, and cache to `giglens-v43-giglens-calendar-timestamps`.
 
 ## 4.2.0 — Full audit, safer detection, date-aware tax estimates, and UI/performance polish
 

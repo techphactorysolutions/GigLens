@@ -14,15 +14,13 @@
     [ROLLBACK_KEY]: "driveledger.rollback.v1",
     [LAST_BACKUP_KEY]: "driveledger.lastBackup.v1"
   };
-  const DATA_VERSION = 15;
-  const BACKUP_VERSION = 16;
+  const DATA_VERSION = 16;
+  const BACKUP_VERSION = 17;
   const OCR_LEARNING_VERSION = 1;
   const OCR_LEARNING_LIMIT = 120;
   const OCR_INIT_TIMEOUT_MS = 20000;
   const OCR_RECOGNIZE_TIMEOUT_MS = 45000;
   const OCR_TERMINATE_TIMEOUT_MS = 3000;
-  const SCREENSHOT_ACCENT_TIMEOUT_MS = 6000;
-  const SCREENSHOT_ACCENT_MAX_HEIGHT = 260;
   const OCR_LIBRARY_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
   const OCR_LIBRARY_INTEGRITY = "sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F";
   const MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024;
@@ -64,6 +62,7 @@
   ]);
 
   const validSources = new Set(["manual", "ocr", "calculator", "import"]);
+  const validTimestampSources = new Set(["ocr", "file", "manual", "saved", "import"]);
   const OCR_LEARNING_TOKEN_ALLOWLIST = new Set([
     "doordash", "dasher", "dash", "uber", "eats", "trip", "radar", "exclusive", "grubhub", "diner",
     "instacart", "shopper", "batch", "spark", "walmart", "roadie", "gig", "amazon", "flex", "block",
@@ -120,6 +119,8 @@
   let quickScanGeneration = 0;
   let fullScanGeneration = 0;
   let historyDayLimit = HISTORY_PAGE_DAYS;
+  let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  let selectedCalendarDay = todayKey();
 
   const els = {
     todayHero: $("todayHero"),
@@ -192,6 +193,16 @@
     analyticsZoneBreakdown: $("analyticsZoneBreakdown"),
     analyticsHourlyBreakdown: $("analyticsHourlyBreakdown"),
     historyList: $("historyList"),
+    calendarGrid: $("calendarGrid"),
+    calendarMonthLabel: $("calendarMonthLabel"),
+    calendarSelectedLabel: $("calendarSelectedLabel"),
+    calendarDaySummary: $("calendarDaySummary"),
+    calendarDayList: $("calendarDayList"),
+    calendarWorkNote: $("calendarWorkNote"),
+    calendarPrevBtn: $("calendarPrevBtn"),
+    calendarNextBtn: $("calendarNextBtn"),
+    calendarTodayBtn: $("calendarTodayBtn"),
+    calendarAddBtn: $("calendarAddBtn"),
     smartGoalCard: $("smartGoalCard"),
     smartGoalStatus: $("smartGoalStatus"),
     smartGoalSuggestion: $("smartGoalSuggestion"),
@@ -228,6 +239,8 @@
     zoneInput: $("zoneInput"),
     merchantInput: $("merchantInput"),
     notesInput: $("notesInput"),
+    deliveryDateInput: $("deliveryDateInput"),
+    deliveryTimeInput: $("deliveryTimeInput"),
     quickAddOpenBtn: $("quickAddOpenBtn"),
     quickAddSheet: $("quickAddSheet"),
     quickAddForm: $("quickAddForm"),
@@ -246,6 +259,8 @@
     quickMilesInput: $("quickMilesInput"),
     quickMinutesInput: $("quickMinutesInput"),
     quickZoneInput: $("quickZoneInput"),
+    quickDateInput: $("quickDateInput"),
+    quickTimeInput: $("quickTimeInput"),
     quickNotesDetails: $("quickNotesDetails"),
     quickNotesInput: $("quickNotesInput"),
     quickDeliveryPreview: $("quickDeliveryPreview"),
@@ -265,6 +280,7 @@
     ocrEarnings: $("ocrEarnings"),
     ocrMiles: $("ocrMiles"),
     ocrMinutes: $("ocrMinutes"),
+    ocrTimestamp: $("ocrTimestamp"),
     ocrConfidence: $("ocrConfidence"),
     ocrConfidenceLabel: $("ocrConfidenceLabel"),
     ocrCompanyInput: $("ocrCompanyInput"),
@@ -272,6 +288,8 @@
     ocrEarningsInput: $("ocrEarningsInput"),
     ocrMilesInput: $("ocrMilesInput"),
     ocrMinutesInput: $("ocrMinutesInput"),
+    ocrDateInput: $("ocrDateInput"),
+    ocrTimeInput: $("ocrTimeInput"),
     ocrSavePreview: $("ocrSavePreview"),
     saveOcrBtn: $("saveOcrBtn"),
     applyOcrBtn: $("applyOcrBtn"),
@@ -651,8 +669,10 @@
     if (!item || typeof item !== "object") return null;
     const earnings = round2(num(item.earnings));
     const miles = round1(num(item.miles));
-    const createdRaw = item.createdAt || item.date || item.timestamp || new Date().toISOString();
+    const createdRaw = item.createdAt || item.capturedAt || item.screenshotTimestamp || item.date || item.timestamp || new Date().toISOString();
     const createdAt = new Date(createdRaw);
+    const capturedRaw = item.capturedAt || item.screenshotTimestamp || createdRaw;
+    const capturedAt = validDateValue(capturedRaw) ? new Date(capturedRaw) : createdAt;
     const updatedAt = item.updatedAt && !Number.isNaN(new Date(item.updatedAt).getTime())
       ? new Date(item.updatedAt)
       : createdAt;
@@ -666,6 +686,13 @@
     const merchantType = normalizeMerchantTypeValue(item.merchantType, merchant, `${company} ${item.ocrText || ""} ${notes}`);
     const inferredSource = item.ocrText ? "ocr" : "manual";
     const source = validSources.has(item.source) ? item.source : inferredSource;
+    const timestampSource = validTimestampSources.has(item.timestampSource)
+      ? item.timestampSource
+      : source === "ocr" ? "ocr" : source === "import" ? "import" : "manual";
+    const timestampConfidence = bounded(item.timestampConfidence, 0, 100, timestampSource === "ocr" ? 60 : 100, 0);
+    const timestampEvidence = Array.isArray(item.timestampEvidence)
+      ? item.timestampEvidence.map((value) => cleanText(value, 120)).filter(Boolean).slice(0, 6)
+      : [];
     const normalized = {
       id: String(item.id || makeId()),
       date: todayKey(createdAt),
@@ -685,6 +712,10 @@
       tags: normalizeTags(item.tags),
       deleted: Boolean(item.deleted),
       createdAt: createdAt.toISOString(),
+      capturedAt: capturedAt.toISOString(),
+      timestampSource,
+      timestampConfidence,
+      timestampEvidence,
       updatedAt: updatedAt.toISOString(),
       version: DATA_VERSION
     };
@@ -926,6 +957,163 @@
     return !Number.isNaN(date.getTime()) && todayKey(date) === todayKey();
   }
 
+  function validDateValue(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    return !Number.isNaN(date.getTime());
+  }
+
+  function localDateInputValue(value = new Date()) {
+    const date = validDateValue(value) ? new Date(value) : new Date();
+    return todayKey(date);
+  }
+
+  function localTimeInputValue(value = new Date()) {
+    const date = validDateValue(value) ? new Date(value) : new Date();
+    return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  }
+
+  function combineLocalDateTime(dateValue, timeValue, fallback = new Date()) {
+    const dateMatch = String(dateValue || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const timeMatch = String(timeValue || "").match(/^(\d{1,2}):(\d{2})$/);
+    const safeFallback = validDateValue(fallback) ? new Date(fallback) : new Date();
+    if (!dateMatch) return safeFallback;
+    const hours = timeMatch ? Number(timeMatch[1]) : safeFallback.getHours();
+    const minutes = timeMatch ? Number(timeMatch[2]) : safeFallback.getMinutes();
+    const date = new Date(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]), hours, minutes, 0, 0);
+    if (Number.isNaN(date.getTime())) return safeFallback;
+    if (date.getFullYear() !== Number(dateMatch[1]) || date.getMonth() !== Number(dateMatch[2]) - 1 || date.getDate() !== Number(dateMatch[3])) return safeFallback;
+    return date;
+  }
+
+  const OCR_MONTH_INDEX = Object.freeze({
+    jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
+    may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7,
+    sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10,
+    dec: 11, december: 11
+  });
+
+  function inferredYearDate(month, day, reference = new Date()) {
+    const ref = validDateValue(reference) ? new Date(reference) : new Date();
+    const candidates = [ref.getFullYear() - 1, ref.getFullYear(), ref.getFullYear() + 1]
+      .map((year) => new Date(year, month, day, ref.getHours(), ref.getMinutes(), 0, 0))
+      .filter((date) => date.getMonth() === month && date.getDate() === day);
+    const futureLimit = ref.getTime() + 45 * 864e5;
+    const preferred = candidates.filter((date) => date.getTime() <= futureLimit);
+    return (preferred.length ? preferred : candidates)
+      .sort((a, b) => Math.abs(a - ref) - Math.abs(b - ref))[0] || ref;
+  }
+
+  function detectScreenshotTimestamp(text, fallbackDate = new Date()) {
+    const raw = String(text || "");
+    const lines = raw.replace(/\r/g, "\n").split(/\n+/).map((line) => line.trim()).filter(Boolean);
+    const fallback = validDateValue(fallbackDate) ? new Date(fallbackDate) : new Date();
+    const dateCandidates = [];
+    const timeCandidates = [];
+    const pushDate = (date, score, evidence, lineIndex) => {
+      if (!validDateValue(date)) return;
+      const candidate = new Date(date);
+      if (candidate.getFullYear() < 2015 || candidate.getFullYear() > new Date().getFullYear() + 1) return;
+      dateCandidates.push({ date: candidate, score, evidence, lineIndex });
+    };
+    const pushTime = (hours, minutes, score, evidence, lineIndex, inferredMeridiem = false) => {
+      if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return;
+      timeCandidates.push({ hours, minutes, score, evidence, lineIndex, inferredMeridiem });
+    };
+
+    lines.forEach((line, lineIndex) => {
+      const topBoost = lineIndex <= 2 ? 5 : lineIndex <= 5 ? 2 : 0;
+      const lower = line.toLowerCase();
+      let match;
+
+      const iso = /\b(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})\b/g;
+      while ((match = iso.exec(line)) !== null) {
+        pushDate(new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), fallback.getHours(), fallback.getMinutes()), 10 + topBoost, match[0], lineIndex);
+      }
+
+      const numeric = /\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/g;
+      while ((match = numeric.exec(line)) !== null) {
+        let year = Number(match[3]);
+        if (year < 100) year += year >= 70 ? 1900 : 2000;
+        pushDate(new Date(year, Number(match[1]) - 1, Number(match[2]), fallback.getHours(), fallback.getMinutes()), 10 + topBoost, match[0], lineIndex);
+      }
+
+      const monthName = /\b(?:sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?)?\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(20\d{2}))?\b/gi;
+      while ((match = monthName.exec(line)) !== null) {
+        const month = OCR_MONTH_INDEX[match[1].toLowerCase()];
+        const day = Number(match[2]);
+        const date = match[3]
+          ? new Date(Number(match[3]), month, day, fallback.getHours(), fallback.getMinutes())
+          : inferredYearDate(month, day, fallback);
+        pushDate(date, 8 + topBoost + (match[3] ? 2 : 0) + (/\b(?:sun|mon|tue|wed|thu|fri|sat)/i.test(match[0]) ? 2 : 0), match[0], lineIndex);
+      }
+
+      const dayMonth = /\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:,?\s+(20\d{2}))?\b/gi;
+      while ((match = dayMonth.exec(line)) !== null) {
+        const month = OCR_MONTH_INDEX[match[2].toLowerCase()];
+        const day = Number(match[1]);
+        const date = match[3]
+          ? new Date(Number(match[3]), month, day, fallback.getHours(), fallback.getMinutes())
+          : inferredYearDate(month, day, fallback);
+        pushDate(date, 7 + topBoost + (match[3] ? 2 : 0), match[0], lineIndex);
+      }
+
+      if (/\byesterday\b/i.test(line)) {
+        const date = new Date(fallback);
+        date.setDate(date.getDate() - 1);
+        pushDate(date, 7 + topBoost, "Yesterday", lineIndex);
+      } else if (/\btoday\b/i.test(line) && lineIndex <= 5) {
+        pushDate(fallback, 5 + topBoost, "Today", lineIndex);
+      }
+
+      const timeRegex = /\b([01]?\d|2[0-3]):([0-5]\d)\s*(a\.?m\.?|p\.?m\.?)?\b/gi;
+      while ((match = timeRegex.exec(line)) !== null) {
+        let hours = Number(match[1]);
+        const minutes = Number(match[2]);
+        const suffix = String(match[3] || "").toLowerCase().replace(/\./g, "");
+        if (suffix === "pm" && hours < 12) hours += 12;
+        if (suffix === "am" && hours === 12) hours = 0;
+        let inferredMeridiem = false;
+        if (!suffix && hours <= 12 && fallback.getHours() % 12 === hours % 12) {
+          hours = fallback.getHours();
+          inferredMeridiem = true;
+        }
+        const near = lower.slice(Math.max(0, match.index - 24), Math.min(lower.length, match.index + match[0].length + 30));
+        let score = 5 + topBoost + (suffix ? 4 : 0);
+        if (/^(?:\s|[^a-z0-9])*\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?(?:\s|[^a-z0-9])*$/i.test(line)) score += 3;
+        if (/\b(?:deliver by|pickup by|ready by|arrive by|dropoff by|estimated|duration|total time|eta)\b/i.test(near)) score -= 7;
+        if (/\b(?:safari|iphone|ipad|lte|5g|wifi|sun|mon|tue|wed|thu|fri|sat|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(lower)) score += 3;
+        pushTime(hours, minutes, score, match[0], lineIndex, inferredMeridiem);
+      }
+    });
+
+    dateCandidates.sort((a, b) => b.score - a.score || a.lineIndex - b.lineIndex);
+    timeCandidates.sort((a, b) => b.score - a.score || a.lineIndex - b.lineIndex);
+    const dateChoice = dateCandidates[0] || null;
+    const timeChoice = timeCandidates[0] && timeCandidates[0].score >= 5 ? timeCandidates[0] : null;
+    const combined = new Date(dateChoice?.date || fallback);
+    if (timeChoice) combined.setHours(timeChoice.hours, timeChoice.minutes, 0, 0);
+    else combined.setSeconds(0, 0);
+
+    const hasOCRDate = Boolean(dateChoice);
+    const hasOCRTime = Boolean(timeChoice);
+    const source = hasOCRDate || hasOCRTime ? "ocr" : "file";
+    const confidence = hasOCRDate && hasOCRTime
+      ? (timeChoice?.inferredMeridiem ? 84 : 92)
+      : hasOCRDate || hasOCRTime ? 68 : 35;
+    const evidence = [];
+    if (dateChoice) evidence.push(`date ${dateChoice.evidence}`);
+    if (timeChoice) evidence.push(`time ${timeChoice.evidence}`);
+    if (timeChoice?.inferredMeridiem) evidence.push("AM/PM inferred from image file time");
+    if (!evidence.length) evidence.push("image file date");
+    else if (!dateChoice || !timeChoice) evidence.push("image file fallback");
+    return {
+      capturedAt: combined.toISOString(),
+      timestampSource: source,
+      timestampConfidence: confidence,
+      timestampEvidence: evidence
+    };
+  }
+
   function num(value) {
     let s = String(value ?? "").trim().replace(/[^0-9.,-]/g, "");
     if (!s || s === "-" || s === "." || s === ",") return 0;
@@ -1026,14 +1214,17 @@
       return { start: dayStart, end: dayEnd, activeMilliseconds, breakMilliseconds: 0 };
     }
 
+    const screenshotWork = estimateScreenshotWork(todays);
+    if (screenshotWork.milliseconds > 0) {
+      return {
+        start: screenshotWork.start,
+        end: screenshotWork.end,
+        activeMilliseconds: screenshotWork.milliseconds,
+        breakMilliseconds: 0
+      };
+    }
     const trackedMinutes = todays.reduce((total, delivery) => total + Math.max(0, num(delivery.minutes)), 0);
     if (trackedMinutes > 0) return null;
-    if (todays.length >= 2) {
-      const start = new Date(todays[0].createdAt);
-      const end = new Date(todays[todays.length - 1].createdAt);
-      const fallbackMilliseconds = Math.max(0, end - start);
-      if (fallbackMilliseconds > 0) return { start, end, activeMilliseconds: fallbackMilliseconds, breakMilliseconds: 0 };
-    }
     return null;
   }
 
@@ -1301,6 +1492,7 @@
     renderBreakdown(els.zoneBreakdown, todays, "zone");
     renderAnalytics();
     renderHistory();
+    renderCalendar();
     renderSettings();
     renderPrivacyCenter();
     renderOCRLearningStatus();
@@ -1325,6 +1517,8 @@
     renderCommandMetrics(todays, c, goal, remaining, score, bestCompany, bestZone, worstCompany, worstZone);
     els.shiftStatus.textContent = shiftStatusText(c.hours);
     els.goalRemaining.textContent = buildGoalInsight(c, goal, remaining);
+    const calendarScreen = $("tab-calendar");
+    if (calendarScreen?.classList.contains("active")) renderCalendar();
   }
 
   function renderCommandMetrics(todays, c, goal, remaining, score, bestCompany, bestZone, worstCompany = null, worstZone = null) {
@@ -2160,6 +2354,195 @@
     else toast("Smart goal ignored. Save more history whenever you are ready.");
   }
 
+
+  function dateFromDayKey(dateKey) {
+    const match = String(dateKey || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return new Date();
+    const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0);
+    return Number.isNaN(date.getTime()) ? new Date() : date;
+  }
+
+  function deliveriesForDay(dateKey) {
+    return deliveries
+      .filter((delivery) => !delivery.deleted && todayKey(new Date(delivery.createdAt)) === dateKey)
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  }
+
+  function shiftMillisecondsForDay(dateKey) {
+    const dayDate = dateFromDayKey(dateKey);
+    const { start: dayStart, end: dayEnd } = localDayBounds(dayDate);
+    const history = Array.isArray(shift.shiftHistory) ? shift.shiftHistory : [];
+    let total = history.reduce((sum, item) => sum + historyActiveMillisecondsForDay(item, dayStart, dayEnd), 0);
+    const now = new Date();
+    if (shift.active && shift.startedAt) {
+      total += activeShiftMilliseconds(shift.startedAt, now, shift.breaks || [], dayStart, dayEnd);
+    } else if (shift.startedAt && shift.endedAt) {
+      const alreadySaved = history.some((item) => item.startedAt === shift.startedAt && item.endedAt === shift.endedAt);
+      if (!alreadySaved) total += activeShiftMilliseconds(shift.startedAt, shift.endedAt, shift.breaks || [], dayStart, dayEnd);
+    }
+    return Math.max(0, total);
+  }
+
+  function estimateScreenshotWork(rows, idleGapMinutes = 75) {
+    const points = (rows || [])
+      .filter((row) => validDateValue(row.createdAt))
+      .slice()
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    if (!points.length) return { milliseconds: 0, sessions: 0, start: null, end: null };
+    const gapLimit = Math.max(15, idleGapMinutes) * 60000;
+    const sessions = [];
+    let currentStart = new Date(points[0].createdAt).getTime();
+    let currentEnd = currentStart + Math.max(0, num(points[0].minutes)) * 60000;
+    for (let index = 1; index < points.length; index += 1) {
+      const start = new Date(points[index].createdAt).getTime();
+      const end = start + Math.max(0, num(points[index].minutes)) * 60000;
+      if (start - currentEnd <= gapLimit) {
+        currentEnd = Math.max(currentEnd, end, start);
+      } else {
+        sessions.push({ start: currentStart, end: currentEnd });
+        currentStart = start;
+        currentEnd = end;
+      }
+    }
+    sessions.push({ start: currentStart, end: currentEnd });
+    const milliseconds = sessions.reduce((sum, session) => sum + Math.max(0, session.end - session.start), 0);
+    return {
+      milliseconds,
+      sessions: sessions.length,
+      start: new Date(sessions[0].start),
+      end: new Date(sessions[sessions.length - 1].end)
+    };
+  }
+
+  function workSummaryForDay(dateKey, rows = deliveriesForDay(dateKey)) {
+    const shiftMilliseconds = shiftMillisecondsForDay(dateKey);
+    if (shiftMilliseconds > 0) {
+      return { milliseconds: shiftMilliseconds, source: "shift", sessions: 1 };
+    }
+    const screenshot = estimateScreenshotWork(rows);
+    return { ...screenshot, source: "screenshots" };
+  }
+
+  function compactDuration(milliseconds) {
+    const minutes = Math.max(0, Math.round(Number(milliseconds || 0) / 60000));
+    if (!minutes) return "—";
+    const hours = Math.floor(minutes / 60);
+    const remainder = minutes % 60;
+    return hours ? `${hours}h ${String(remainder).padStart(2, "0")}m` : `${remainder}m`;
+  }
+
+  function calendarCellHTML(date, currentMonth) {
+    const key = todayKey(date);
+    const rows = deliveriesForDay(key);
+    const summary = calculateForDay(rows);
+    const work = workSummaryForDay(key, rows);
+    const classes = ["calendar-day"];
+    if (date.getMonth() !== currentMonth) classes.push("outside-month");
+    if (key === todayKey()) classes.push("today");
+    if (key === selectedCalendarDay) classes.push("selected");
+    return `
+      <button class="${classes.join(" ")}" data-calendar-day="${escapeHTML(key)}" type="button" role="gridcell" aria-label="${escapeHTML(date.toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" }))}">
+        <span class="calendar-day-number">${date.getDate()}</span>
+        ${rows.length ? `<span class="calendar-day-indicator" aria-hidden="true"></span>` : ""}
+        ${rows.length ? `<span class="calendar-day-earnings">${money.format(summary.earnings)}</span>` : ""}
+        ${rows.length ? `<span class="calendar-day-meta">${rows.length} ${rows.length === 1 ? "order" : "orders"}</span>` : ""}
+        ${work.milliseconds ? `<span class="calendar-day-meta work-meta">${compactDuration(work.milliseconds)}</span>` : ""}
+      </button>`;
+  }
+
+  function renderCalendar() {
+    if (!els.calendarGrid) return;
+    const year = calendarCursor.getFullYear();
+    const month = calendarCursor.getMonth();
+    const first = new Date(year, month, 1, 12, 0, 0, 0);
+    const gridStart = new Date(first);
+    gridStart.setDate(1 - first.getDay());
+    els.calendarMonthLabel.textContent = first.toLocaleDateString([], { month: "long", year: "numeric" });
+    const cells = [];
+    for (let index = 0; index < 42; index += 1) {
+      const date = new Date(gridStart);
+      date.setDate(gridStart.getDate() + index);
+      cells.push(calendarCellHTML(date, month));
+    }
+    els.calendarGrid.innerHTML = cells.join("");
+    renderSelectedCalendarDay();
+  }
+
+  function renderSelectedCalendarDay() {
+    if (!els.calendarDayList) return;
+    const rows = deliveriesForDay(selectedCalendarDay);
+    const summary = calculateForDay(rows);
+    const work = workSummaryForDay(selectedCalendarDay, rows);
+    const selectedDate = dateFromDayKey(selectedCalendarDay);
+    els.calendarSelectedLabel.textContent = selectedDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    if (!rows.length) {
+      els.calendarDaySummary.className = "calendar-day-summary empty";
+      els.calendarDaySummary.textContent = "No deliveries saved for this day.";
+      els.calendarDayList.className = "history-list empty";
+      els.calendarDayList.textContent = "Use Add to day to create a historical entry or scan a screenshot with a readable timestamp.";
+    } else {
+      els.calendarDaySummary.className = "calendar-day-summary";
+      els.calendarDaySummary.innerHTML = `
+        <span><strong>${money.format(summary.earnings)}</strong><small>earnings</small></span>
+        <span><strong>${money.format(summary.profit)}</strong><small>estimated profit</small></span>
+        <span><strong>${summary.miles.toFixed(1)} mi</strong><small>business miles</small></span>
+        <span><strong>${compactDuration(work.milliseconds)}</strong><small>${work.source === "shift" ? "shift time" : "screenshot estimate"}</small></span>`;
+      els.calendarDayList.className = "history-list";
+      els.calendarDayList.innerHTML = rows.slice().reverse().map((row) => renderHistoryItem(row)).join("");
+    }
+    if (els.calendarWorkNote) {
+      els.calendarWorkNote.innerHTML = work.source === "shift"
+        ? `<span class="calendar-work-source">Work time comes from saved Start/Pause/Resume/End shift data.</span>`
+        : rows.length > 1
+          ? `<span class="calendar-work-source">Estimated from ${rows.length} delivery timestamps using a 75-minute session-gap rule.</span> Review dates and times for accuracy.`
+          : "Add another timestamp or enter delivery minutes to improve the work-time estimate.";
+    }
+  }
+
+  function selectCalendarDay(dateKey) {
+    selectedCalendarDay = dateKey;
+    const selected = dateFromDayKey(dateKey);
+    if (selected.getMonth() !== calendarCursor.getMonth() || selected.getFullYear() !== calendarCursor.getFullYear()) {
+      calendarCursor = new Date(selected.getFullYear(), selected.getMonth(), 1);
+    }
+    renderCalendar();
+  }
+
+  function moveCalendarMonth(offset) {
+    calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() + offset, 1);
+    renderCalendar();
+  }
+
+  function showSavedDeliveryDay(delivery) {
+    const key = todayKey(new Date(delivery.createdAt));
+    if (key === todayKey()) {
+      showTab("today");
+      return;
+    }
+    selectedCalendarDay = key;
+    const date = dateFromDayKey(key);
+    calendarCursor = new Date(date.getFullYear(), date.getMonth(), 1);
+    renderCalendar();
+    showTab("calendar");
+  }
+
+  function addDeliveryToCalendarDay() {
+    const selected = dateFromDayKey(selectedCalendarDay);
+    const now = new Date();
+    els.editDeliveryId.value = "";
+    els.companyInput.value = settings.defaultCompany || "DoorDash";
+    els.zoneInput.value = settings.defaultZone || "";
+    els.deliveryDateInput.value = localDateInputValue(selected);
+    els.deliveryTimeInput.value = selectedCalendarDay === todayKey() ? localTimeInputValue(now) : "12:00";
+    els.earningsInput.value = "";
+    els.milesInput.value = "";
+    els.minutesInput.value = "";
+    if (els.merchantInput) els.merchantInput.value = "";
+    els.notesInput.value = "";
+    showTab("add");
+    renderDeliveryPreview();
+  }
+
   function renderHistory() {
     const activeDeliveries = deliveries.filter((item) => !item.deleted);
     if (!activeDeliveries.length) {
@@ -2185,6 +2568,7 @@
 
   function renderHistoryDay(dateKey, rows) {
     const c = calculateForDay(rows);
+    const work = workSummaryForDay(dateKey, rows);
     const title = dateLabel(dateKey);
     return `
       <section class="history-day" data-history-day="${escapeHTML(dateKey)}">
@@ -2201,7 +2585,7 @@
         <div class="day-metrics" aria-label="${escapeHTML(title)} day metrics">
           <span><strong>${money.format(c.avgMile)}</strong><small>avg $/mile</small></span>
           <span><strong>${c.avgHour ? `${money.format(c.avgHour)}/hr` : "—"}</strong><small>gross/hour</small></span>
-          <span><strong>${c.hours ? `${round1(c.hours)}h` : "—"}</strong><small>tracked time</small></span>
+          <span><strong>${compactDuration(work.milliseconds)}</strong><small>${work.source === "shift" ? "shift time" : "screenshot time"}</small></span>
         </div>
         ${rows.map((d) => renderHistoryItem(d)).join("")}
       </section>
@@ -2216,6 +2600,14 @@
     if (value === "store") return "Store";
     if (value === "restaurant") return "Restaurant";
     return "Merchant";
+  }
+
+  function timestampSourceLabel(value) {
+    if (value === "ocr") return "OCR time";
+    if (value === "file") return "Photo time";
+    if (value === "import") return "Imported time";
+    if (value === "manual") return "Manual time";
+    return "Saved time";
   }
 
   function renderHistoryItem(d) {
@@ -2235,7 +2627,7 @@
           <span><strong>${money.format(perMile)}</strong><small>$/mile</small></span>
           <span><strong>${money.format(profit)}</strong><small>profit</small></span>
         </div>
-        <div class="history-meta">${date} · Zone: ${escapeHTML(zoneLabel)} · <span class="source-pill">${escapeHTML(sourceLabel(d.source))}</span></div>
+        <div class="history-meta">${date} · Zone: ${escapeHTML(zoneLabel)} · <span class="source-pill">${escapeHTML(sourceLabel(d.source))}</span><span class="timestamp-source-pill">${escapeHTML(timestampSourceLabel(d.timestampSource))}</span></div>
         ${d.merchant ? `<div class="history-meta merchant-meta">${merchantTypeLabel(d.merchantType)}: ${escapeHTML(d.merchant)}</div>` : ""}
         ${d.notes ? `<div class="history-meta">${escapeHTML(d.notes)}</div>` : ""}
         <div class="history-actions" aria-label="Delivery actions">
@@ -2814,6 +3206,9 @@
     if (!els.editDeliveryId.value) {
       els.companyInput.value = settings.defaultCompany || "DoorDash";
       els.zoneInput.value = settings.defaultZone || "";
+      const now = new Date();
+      if (els.deliveryDateInput) els.deliveryDateInput.value = localDateInputValue(now);
+      if (els.deliveryTimeInput) els.deliveryTimeInput.value = localTimeInputValue(now);
     }
     if (mode === "scan") {
       setTimeout(() => {
@@ -2845,11 +3240,17 @@
     if (!els.quickAddForm) return;
     els.quickCompanyInput.value = quickDefaultCompany();
     els.quickZoneInput.value = quickDefaultZone();
+    const quickNow = new Date();
+    if (els.quickDateInput) els.quickDateInput.value = localDateInputValue(quickNow);
+    if (els.quickTimeInput) els.quickTimeInput.value = localTimeInputValue(quickNow);
     if (clearValues) {
       [els.quickEarningsInput, els.quickMilesInput, els.quickMinutesInput, els.quickNotesInput, els.quickMerchantInput].forEach((input) => {
         input.value = "";
         input.classList.remove("invalid");
       });
+      const nextQuickTime = new Date();
+      if (els.quickDateInput) els.quickDateInput.value = localDateInputValue(nextQuickTime);
+      if (els.quickTimeInput) els.quickTimeInput.value = localTimeInputValue(nextQuickTime);
       els.quickNotesDetails.open = false;
       if (els.quickManualDetails) els.quickManualDetails.open = true;
       clearQuickScan(true);
@@ -2892,13 +3293,15 @@
     const merchant = cleanText(els.quickMerchantInput?.value || "", 120);
     const merchantPrefix = merchant ? `${merchant} · ` : "";
     const sourceSuffix = quickOCRText ? " · scanned" : "";
+    const quickTimestamp = combineLocalDateTime(els.quickDateInput?.value, els.quickTimeInput?.value, quickOCRParsed?.capturedAt || new Date());
+    const timestampSuffix = ` · ${quickTimestamp.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
     const good = miles === 0 ? earnings >= settings.minPayout : perMile >= settings.minPerMile && (!minutes || hourly >= settings.minPerHour);
     els.quickDeliveryPreview.className = `delivery-preview ${good ? "good" : "bad"}`;
     if (miles === 0) {
-      els.quickDeliveryPreview.textContent = `${merchantPrefix}${money.format(profit)} estimated profit · mileage not tracked yet${minutes ? ` · ${money.format(hourly)}/hr` : ""}${sourceSuffix}`;
+      els.quickDeliveryPreview.textContent = `${merchantPrefix}${money.format(profit)} estimated profit · mileage not tracked yet${minutes ? ` · ${money.format(hourly)}/hr` : ""}${timestampSuffix}${sourceSuffix}`;
       return;
     }
-    els.quickDeliveryPreview.textContent = `${merchantPrefix}${money.format(profit)} estimated profit · ${money.format(perMile)}/mi gross · ${money.format(profitMile)}/mi profit${minutes ? ` · ${money.format(hourly)}/hr` : ""}${sourceSuffix}`;
+    els.quickDeliveryPreview.textContent = `${merchantPrefix}${money.format(profit)} estimated profit · ${money.format(perMile)}/mi gross · ${money.format(profitMile)}/mi profit${minutes ? ` · ${money.format(hourly)}/hr` : ""}${timestampSuffix}${sourceSuffix}`;
   }
 
   function readQuickNumber(input, label, { required = false, allowZero = true } = {}) {
@@ -2932,12 +3335,19 @@
     els.quickEarningsInput.value = parsed.earnings ? parsed.earnings.toFixed(2) : "";
     els.quickMilesInput.value = parsed.miles ? parsed.miles.toFixed(1) : "";
     els.quickMinutesInput.value = parsed.minutes ? String(parsed.minutes) : "";
+    if (parsed.capturedAt && validDateValue(parsed.capturedAt)) {
+      if (els.quickDateInput) els.quickDateInput.value = localDateInputValue(parsed.capturedAt);
+      if (els.quickTimeInput) els.quickTimeInput.value = localTimeInputValue(parsed.capturedAt);
+    }
     if (els.quickManualDetails) els.quickManualDetails.open = true;
     if (els.quickLearningHint) {
       const learned = Array.isArray(parsed.learningApplied) && parsed.learningApplied.length;
-      els.quickLearningHint.textContent = learned
+      const timestampNote = parsed.timestampSource === "file"
+        ? " Date/time uses the image file and needs review."
+        : ` Date/time confidence: ${parsed.timestampConfidence || 0}%.`;
+      els.quickLearningHint.textContent = (learned
         ? `Local learning helped this scan: ${parsed.learningApplied.join(", ")}. Review before saving.`
-        : "Correct any field before saving. GigLens remembers the correction locally for similar future screenshots.";
+        : "Correct any field before saving. GigLens remembers the correction locally for similar future screenshots.") + timestampNote;
     }
     renderQuickAddPreview();
   }
@@ -3004,19 +3414,7 @@
     if (typeof globalThis.createImageBitmap !== "function" || !document?.createElement) return null;
     let bitmap = null;
     try {
-      const bitmapPromise = Promise.resolve(globalThis.createImageBitmap(file));
-      try {
-        bitmap = await withTimeout(
-          bitmapPromise,
-          SCREENSHOT_ACCENT_TIMEOUT_MS,
-          "Optional screenshot color analysis timed out."
-        );
-      } catch (error) {
-        void bitmapPromise.then((lateBitmap) => {
-          if (lateBitmap && typeof lateBitmap.close === "function") lateBitmap.close();
-        }).catch(() => {});
-        throw error;
-      }
+      bitmap = await globalThis.createImageBitmap(file);
       if (!bitmap?.width || !bitmap?.height) return null;
       const canvas = document.createElement("canvas");
       const context = typeof canvas.getContext === "function" ? canvas.getContext("2d", { willReadFrequently: true }) : null;
@@ -3024,7 +3422,7 @@
       const width = 160;
       const sourceY = Math.floor(bitmap.height * 0.34);
       const sourceHeight = Math.max(1, bitmap.height - sourceY);
-      const height = Math.min(SCREENSHOT_ACCENT_MAX_HEIGHT, Math.max(80, Math.round(width * sourceHeight / bitmap.width)));
+      const height = Math.max(80, Math.round(width * sourceHeight / bitmap.width));
       canvas.width = width;
       canvas.height = height;
       context.drawImage(bitmap, 0, sourceY, bitmap.width, sourceHeight, 0, 0, width, height);
@@ -3062,13 +3460,12 @@
       evidence: Array.isArray(platformResult?.evidence) ? [...platformResult.evidence] : []
     };
     if (!visualEvidence) return result;
-    const hasTextConflict = result.evidence.some((item) => /^conflicting\b/i.test(String(item || "")));
     const accentLabel = `${visualEvidence.color} interface accent`;
     if (visualEvidence.platform) {
       if (result.platform === visualEvidence.platform) {
         result.platformConfidence = Math.min(99, Math.max(result.platformConfidence || 0, visualEvidence.confidence) + 6);
         result.evidence.push(accentLabel);
-      } else if (!hasTextConflict && allowVisualSelection && (!result.platform || (result.platformConfidence || 0) < 58)) {
+      } else if (allowVisualSelection && (!result.platform || (result.platformConfidence || 0) < 58)) {
         result.platform = visualEvidence.platform;
         result.platformConfidence = Math.min(76, visualEvidence.confidence);
         result.evidence = [accentLabel];
@@ -3192,7 +3589,7 @@
       ]);
       if (scanGeneration !== quickScanGeneration) return;
       quickOCRText = result?.data?.text || "";
-      quickOCRParsed = parseOCR(quickOCRText, visualEvidence);
+      quickOCRParsed = parseOCR(quickOCRText, visualEvidence, { fallbackDate: file.lastModified ? new Date(file.lastModified) : new Date() });
       quickOCRParsed.merchantType = inferMerchantType(quickOCRParsed.merchant, quickOCRText);
       populateQuickFromOCR(quickOCRParsed);
       if (els.quickOcrText) els.quickOcrText.textContent = quickOCRText || "No readable text detected.";
@@ -3227,7 +3624,13 @@
     const minutes = readQuickNumber(els.quickMinutesInput, "minutes", { required: false, allowZero: true });
     if (minutes === null) return;
 
-    const now = new Date().toISOString();
+    const savedAt = new Date();
+    const deliveryTimestamp = combineLocalDateTime(els.quickDateInput?.value, els.quickTimeInput?.value, quickOCRParsed?.capturedAt || savedAt);
+    const quickOriginalTimestamp = quickOCRParsed?.capturedAt && validDateValue(quickOCRParsed.capturedAt)
+      ? new Date(quickOCRParsed.capturedAt)
+      : null;
+    const quickTimestampCorrected = quickOriginalTimestamp && Math.abs(deliveryTimestamp - quickOriginalTimestamp) >= 60000;
+    const now = savedAt.toISOString();
     const delivery = normalizeDelivery({
       id: makeId(),
       company,
@@ -3240,7 +3643,11 @@
       source: quickOCRText ? "ocr" : "manual",
       ocrText: quickOCRText,
       ocrConfidence: quickOCRParsed?.confidence || 0,
-      createdAt: now,
+      createdAt: deliveryTimestamp.toISOString(),
+      capturedAt: deliveryTimestamp.toISOString(),
+      timestampSource: quickOCRText ? (quickTimestampCorrected ? "manual" : (quickOCRParsed?.timestampSource || "ocr")) : "manual",
+      timestampConfidence: quickOCRText ? (quickTimestampCorrected ? 100 : (quickOCRParsed?.timestampConfidence || 50)) : 100,
+      timestampEvidence: quickTimestampCorrected ? ["user corrected screenshot date/time"] : (quickOCRParsed?.timestampEvidence || []),
       updatedAt: now,
       version: DATA_VERSION
     });
@@ -3269,6 +3676,7 @@
       return;
     }
     closeQuickAdd();
+    showSavedDeliveryDay(delivery);
   }
 
   async function scanScreenshot(file) {
@@ -3296,7 +3704,7 @@
       ]);
       if (scanGeneration !== fullScanGeneration) return;
       lastOCRText = result?.data?.text || "";
-      lastOCRParsed = parseOCR(lastOCRText, visualEvidence);
+      lastOCRParsed = parseOCR(lastOCRText, visualEvidence, { fallbackDate: file.lastModified ? new Date(file.lastModified) : new Date() });
       lastOCRParsed.merchantType = inferMerchantType(lastOCRParsed.merchant, lastOCRText);
       els.ocrText.textContent = lastOCRText || "No readable text detected.";
       els.ocrDetails.classList.remove("hidden");
@@ -3343,6 +3751,11 @@
     els.ocrEarnings.textContent = parsed.earnings ? money.format(parsed.earnings) : "Needs review";
     els.ocrMiles.textContent = parsed.miles ? `${parsed.miles.toFixed(1)} mi` : "Needs review";
     els.ocrMinutes.textContent = parsed.minutes ? `${parsed.minutes} min` : "Optional";
+    if (els.ocrTimestamp) {
+      els.ocrTimestamp.textContent = parsed.capturedAt && validDateValue(parsed.capturedAt)
+        ? new Date(parsed.capturedAt).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+        : "Needs review";
+    }
     els.ocrConfidence.textContent = `${parsed.confidence}%`;
     els.ocrConfidenceLabel.textContent = label;
     els.ocrConfidenceLabel.className = `status-chip ${label === "High confidence" ? "good" : label === "Medium confidence" ? "warning" : "bad"}`;
@@ -3351,11 +3764,18 @@
     els.ocrEarningsInput.value = parsed.earnings ? parsed.earnings.toFixed(2) : "";
     els.ocrMilesInput.value = parsed.miles ? parsed.miles.toFixed(1) : "";
     els.ocrMinutesInput.value = parsed.minutes ? String(parsed.minutes) : "";
+    if (parsed.capturedAt && validDateValue(parsed.capturedAt)) {
+      if (els.ocrDateInput) els.ocrDateInput.value = localDateInputValue(parsed.capturedAt);
+      if (els.ocrTimeInput) els.ocrTimeInput.value = localTimeInputValue(parsed.capturedAt);
+    }
     if (els.ocrLearningHint) {
       const learned = Array.isArray(parsed.learningApplied) && parsed.learningApplied.length;
-      els.ocrLearningHint.textContent = learned
+      const timestampNote = parsed.timestampSource === "file"
+        ? " Date/time came from the image file and should be reviewed."
+        : ` Date/time confidence: ${parsed.timestampConfidence || 0}%.`;
+      els.ocrLearningHint.textContent = (learned
         ? `Local learning helped this scan: ${parsed.learningApplied.join(", ")}. Your edits will refine it again.`
-        : "Corrections improve future scans on this device. Screenshots are never stored in the learning profile.";
+        : "Corrections improve future scans on this device. Screenshots are never stored in the learning profile.") + timestampNote;
     }
     renderOCRSavePreview();
     els.ocrReview.classList.remove("hidden");
@@ -3378,8 +3798,10 @@
     const hourlyText = minutes > 0 ? ` · ${money.format(grossHourlyRate(earnings, minutes))}/hr` : "";
     const merchantText = cleanText(els.ocrMerchantInput?.value || "", 120);
     const merchantPrefix = merchantText ? `${merchantText} · ` : "";
+    const previewTimestamp = combineLocalDateTime(els.ocrDateInput?.value, els.ocrTimeInput?.value, lastOCRParsed?.capturedAt || new Date());
+    const timestampText = previewTimestamp.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     els.ocrSavePreview.className = `delivery-preview ${miles > 0 && perMile >= settings.minPerMile ? "good" : "warning"}`;
-    els.ocrSavePreview.textContent = `${merchantPrefix}${money.format(profit)} estimated profit · ${perMileText}${hourlyText}`;
+    els.ocrSavePreview.textContent = `${merchantPrefix}${money.format(profit)} estimated profit · ${perMileText}${hourlyText} · ${timestampText}`;
   }
 
   function applyParsedResult(parsed) {
@@ -3390,6 +3812,8 @@
     els.earningsInput.value = reviewed.earnings.toFixed(2);
     els.milesInput.value = reviewed.miles.toFixed(1);
     els.minutesInput.value = reviewed.minutes ? String(reviewed.minutes) : "";
+    if (els.deliveryDateInput) els.deliveryDateInput.value = localDateInputValue(reviewed.capturedAt);
+    if (els.deliveryTimeInput) els.deliveryTimeInput.value = localTimeInputValue(reviewed.capturedAt);
     if (els.merchantInput) els.merchantInput.value = reviewed.merchant || "";
     recordOCRCorrection(parsed, { ...reviewed, merchantType: inferMerchantType(reviewed.merchant, lastOCRText) }, lastOCRText, "review");
     renderDeliveryPreview();
@@ -3403,6 +3827,7 @@
     const miles = num(milesRaw);
     const minutes = num(els.ocrMinutesInput.value);
     const merchant = cleanText(els.ocrMerchantInput?.value || "", 120);
+    const capturedAt = combineLocalDateTime(els.ocrDateInput?.value, els.ocrTimeInput?.value, lastOCRParsed?.capturedAt || new Date());
     if (!earnings || earnings <= 0) {
       toast("Review OCR earnings before saving.");
       flagInvalid(els.ocrEarningsInput);
@@ -3418,7 +3843,21 @@
       flagInvalid(els.ocrMinutesInput);
       return null;
     }
-    return { company, earnings, miles, minutes, merchant };
+    const originalTimestamp = lastOCRParsed?.capturedAt && validDateValue(lastOCRParsed.capturedAt)
+      ? new Date(lastOCRParsed.capturedAt)
+      : null;
+    const timestampCorrected = originalTimestamp && Math.abs(capturedAt - originalTimestamp) >= 60000;
+    return {
+      company,
+      earnings,
+      miles,
+      minutes,
+      merchant,
+      capturedAt,
+      timestampSource: timestampCorrected ? "manual" : (lastOCRParsed?.timestampSource || "ocr"),
+      timestampConfidence: timestampCorrected ? 100 : (lastOCRParsed?.timestampConfidence || 50),
+      timestampEvidence: timestampCorrected ? ["user corrected screenshot date/time"] : (lastOCRParsed?.timestampEvidence || [])
+    };
   }
 
   function saveReviewedOCR() {
@@ -3438,7 +3877,11 @@
       source: "ocr",
       ocrText: lastOCRText,
       ocrConfidence: lastOCRParsed.confidence,
-      createdAt: now,
+      createdAt: reviewed.capturedAt.toISOString(),
+      capturedAt: reviewed.capturedAt.toISOString(),
+      timestampSource: reviewed.timestampSource,
+      timestampConfidence: reviewed.timestampConfidence,
+      timestampEvidence: reviewed.timestampEvidence,
       updatedAt: now,
       version: DATA_VERSION
     });
@@ -3448,7 +3891,7 @@
     writeJSON(STORE_KEY, deliveries);
     clearForm(false);
     render();
-    showTab("today");
+    showSavedDeliveryDay(delivery);
     toast(`Saved reviewed OCR delivery: ${money.format(delivery.earnings)} from ${delivery.company}.${learned.changedFields.length ? " Scanner correction learned." : " Scan pattern confirmed."}`);
   }
 
@@ -3464,6 +3907,7 @@
     els.ocrEarnings.textContent = "—";
     els.ocrMiles.textContent = "—";
     els.ocrMinutes.textContent = "—";
+    if (els.ocrTimestamp) els.ocrTimestamp.textContent = "Needs review";
     els.ocrConfidence.textContent = "—";
     els.ocrConfidenceLabel.textContent = "Needs review";
     els.ocrConfidenceLabel.className = "status-chip";
@@ -3472,6 +3916,9 @@
     els.ocrEarningsInput.value = "";
     els.ocrMilesInput.value = "";
     els.ocrMinutesInput.value = "";
+    const ocrNow = new Date();
+    if (els.ocrDateInput) els.ocrDateInput.value = localDateInputValue(ocrNow);
+    if (els.ocrTimeInput) els.ocrTimeInput.value = localTimeInputValue(ocrNow);
     els.ocrSavePreview.textContent = "Review the detected fields before saving.";
     els.ocrSavePreview.className = "delivery-preview";
     if (els.ocrLearningHint) els.ocrLearningHint.textContent = "Corrections improve future scans on this device. Screenshots are never stored in the learning profile.";
@@ -3488,7 +3935,7 @@
     }
   }
 
-  function parseOCR(text, visualEvidence = null) {
+  function parseOCR(text, visualEvidence = null, scanContext = {}) {
     const rawText = String(text || "");
     const lines = ocrLines(rawText);
     const normalized = rawText.replace(/\s+/g, " ").trim();
@@ -3500,6 +3947,7 @@
     const miles = detectMiles(normalized);
     const minutes = detectMinutes(normalized);
     const merchant = detectMerchant(lines, normalized, platform);
+    const timestamp = detectScreenshotTimestamp(rawText, scanContext.fallbackDate || new Date());
     // Weight the platform's contribution to overall confidence by how sure the
     // fingerprint match was, so a strong brand hit boosts more than a weak guess.
     let confidence = 15;
@@ -3508,6 +3956,7 @@
     if (earnings) confidence += 28;
     if (miles) confidence += 22;
     if (minutes) confidence += 8;
+    if (timestamp.timestampSource === "ocr") confidence += timestamp.timestampConfidence >= 85 ? 8 : 4;
     return applyOCRLearning({
       platform,
       platformConfidence: platformResult.platformConfidence,
@@ -3518,6 +3967,10 @@
       earnings,
       miles,
       minutes,
+      capturedAt: timestamp.capturedAt,
+      timestampSource: timestamp.timestampSource,
+      timestampConfidence: timestamp.timestampConfidence,
+      timestampEvidence: timestamp.timestampEvidence,
       confidence: Math.min(confidence, 98)
     }, rawText);
   }
@@ -3740,8 +4193,6 @@
       [/\bfast\s*pay\b/i, 4, "Fast Pay"],
       [/\bhotspot/i, 3, "hotspots"],
       [/\bdash\b/i, 3, "Dash"],
-      [/\bdeliver\s+by\b/i, 5, "Deliver by"],
-      [/\bcustomer\s+drop[ -]?off\b/i, 6, "Customer dropoff"],
       [/\bguaranteed\b/i, 2, "Guaranteed"],
       [/\bdecline\b/i, 2, "Decline"]
     ],
@@ -3756,8 +4207,6 @@
       [/\buber\s*one\b/i, 6, "Uber One"],
       [/\bdelivery\s*partner\b/i, 5, "delivery partner"],
       [/\buber\b/i, 5, "Uber"],
-      [/\bexclusive\b/i, 5, "Exclusive"],
-      [/\bguaranteed\s*\(?\s*incl\.?\s*tip\s*\)?/i, 4, "Guaranteed incl. tip"],
       [/\bincludes?\s*(?:a\s*)?trip\b/i, 4, "included trip"],
       [/\bgo\s*offline\b/i, 2, "go offline"],
       [/\btrip\b/i, 2, "Trip"]
@@ -3816,37 +4265,6 @@
     [/\btrip\s*(?:request|radar)\b/i, { "DoorDash": -3, "Grubhub": -3 }]
   ];
 
-  const platformQualificationRules = Object.freeze({
-    "DoorDash": (source) => /\b(?:doordash|door\s*dash|dasher|red\s*card|dasher\s*direct|peak\s*pay|earn\s*by\s*time|earn\s*per\s*offer|dash\s*now|fast\s*pay)\b/i.test(source)
-      || (/\bdeliver\s+by\b/i.test(source) && /\bcustomer\s+drop[ -]?off\b/i.test(source)),
-    "Uber Eats": (source) => /\b(?:uber\s*eats|ubereats|trip\s*radar|accept\s*request|trip\s*request|trip\s*supplement|uber\s*one)\b/i.test(source)
-      || (/\bexclusive\b/i.test(source) && /\b(?:total|guaranteed\s*\(?\s*incl\.?\s*tip)\b/i.test(source)),
-    "Grubhub": (source) => /\b(?:grubhub|grub\s*hub)\b/i.test(source)
-      || (/\bdiner\b/i.test(source) && /\baccept\s*offer\b/i.test(source)),
-    "Instacart": (source) => /\binstacart\b/i.test(source)
-      || /\bfull[-\s]*service\s*(?:shop|batch)\b/i.test(source)
-      || (/\bshopper\b/i.test(source) && /\bbatch\b/i.test(source)),
-    "Amazon Flex": (source) => /\bamazon\s*flex\b/i.test(source)
-      || /\bflex\s*app\b/i.test(source)
-      || (/\bdelivery\s*block\b/i.test(source) && /\bsub[-\s]*same[-\s]*day\b/i.test(source)),
-    "Spark": (source) => /\bspark\s*driver\b/i.test(source)
-      || (/\bspark\b/i.test(source) && /\b(?:offer|pickup|delivery|walmart|curbside|round\s*robin)\b/i.test(source))
-      || (/\bround\s*robin\b/i.test(source) && /\b(?:walmart|curbside)\b/i.test(source)),
-    "Roadie": (source) => /\broadie\b/i.test(source),
-    "Catering": (source) => /\b(?:ezcater|cater\s*valley|catering\s*order)\b/i.test(source)
-  });
-
-  const platformDirectIdentityRules = Object.freeze({
-    "DoorDash": /\b(?:doordash|door\s*dash|dasher)\b/i,
-    "Uber Eats": /\b(?:uber\s*eats|ubereats)\b/i,
-    "Grubhub": /\b(?:grubhub|grub\s*hub)\b/i,
-    "Instacart": /\binstacart\b/i,
-    "Amazon Flex": /\bamazon\s*flex\b/i,
-    "Spark": /\bspark(?:\s*driver)?\b/i,
-    "Roadie": /\broadie\b/i,
-    "Catering": /\b(?:ezcater|cater\s*valley)\b/i
-  });
-
   function detectPlatformDetailed(text) {
     const source = String(text || "");
     if (!source.trim()) return { platform: "", platformConfidence: 0, evidence: [], scores: {} };
@@ -3873,26 +4291,16 @@
       }
     }
 
-    const ranked = Object.entries(scores)
-      .filter(([platform, score]) => score > 0 && platformQualificationRules[platform]?.(source))
-      .sort((a, b) => b[1] - a[1]);
+    const ranked = Object.entries(scores).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]);
     if (!ranked.length) return { platform: "", platformConfidence: 0, evidence: [], scores };
-
-    const directBrandPlatforms = ranked.filter(([platform]) => platformDirectIdentityRules[platform]?.test(source));
-    if (directBrandPlatforms.length > 1) {
-      return { platform: "", platformConfidence: 0, evidence: ["conflicting app identities"], scores };
-    }
 
     const [topPlatform, topScore] = ranked[0];
     const runnerUp = ranked[1] ? ranked[1][1] : 0;
     const margin = topScore - runnerUp;
-    const hasBrandHit = Boolean(platformDirectIdentityRules[topPlatform]?.test(source));
-    if (!hasBrandHit && ranked.length > 1 && margin < 3) {
-      return { platform: "", platformConfidence: 0, evidence: ["conflicting workflow evidence"], scores };
-    }
     let confidence = Math.min(99, Math.round(
       Math.min(topScore, 12) / 12 * 65 + Math.min(margin, 10) / 10 * 34
     ));
+    const hasBrandHit = (evidenceByPlatform[topPlatform] || []).some((h) => h.weight >= 9);
     if (hasBrandHit) confidence = Math.max(confidence, 88);
 
     const evidence = (evidenceByPlatform[topPlatform] || [])
@@ -3993,7 +4401,19 @@
 
     const existingId = els.editDeliveryId.value;
     const existing = existingId ? deliveries.find((d) => d.id === existingId) : null;
-    const now = new Date().toISOString();
+    const savedAt = new Date();
+    const deliveryTimestamp = combineLocalDateTime(
+      els.deliveryDateInput?.value,
+      els.deliveryTimeInput?.value,
+      existing?.createdAt || lastOCRParsed?.capturedAt || savedAt
+    );
+    const originalDeliveryTimestamp = existing?.createdAt && validDateValue(existing.createdAt)
+      ? new Date(existing.createdAt)
+      : lastOCRParsed?.capturedAt && validDateValue(lastOCRParsed.capturedAt)
+        ? new Date(lastOCRParsed.capturedAt)
+        : null;
+    const deliveryTimestampCorrected = originalDeliveryTimestamp && Math.abs(deliveryTimestamp - originalDeliveryTimestamp) >= 60000;
+    const now = savedAt.toISOString();
     const delivery = normalizeDelivery({
       id: existingId || makeId(),
       company,
@@ -4006,7 +4426,17 @@
       source: existing ? existing.source : (lastOCRText ? "ocr" : "manual"),
       ocrText: lastOCRText || existing?.ocrText || "",
       ocrConfidence: lastOCRParsed?.confidence || existing?.ocrConfidence || 0,
-      createdAt: existing ? existing.createdAt : now,
+      createdAt: deliveryTimestamp.toISOString(),
+      capturedAt: deliveryTimestamp.toISOString(),
+      timestampSource: deliveryTimestampCorrected
+        ? "manual"
+        : (existing?.timestampSource || (lastOCRText ? (lastOCRParsed?.timestampSource || "ocr") : "manual")),
+      timestampConfidence: deliveryTimestampCorrected
+        ? 100
+        : (existing?.timestampConfidence || (lastOCRText ? (lastOCRParsed?.timestampConfidence || 50) : 100)),
+      timestampEvidence: deliveryTimestampCorrected
+        ? ["user corrected delivery date/time"]
+        : (existing?.timestampEvidence || lastOCRParsed?.timestampEvidence || []),
       updatedAt: now,
       version: DATA_VERSION
     });
@@ -4017,7 +4447,7 @@
     writeJSON(STORE_KEY, deliveries);
     clearForm(!options.stayOnForm);
     render();
-    if (!options.stayOnForm) showTab("today");
+    if (!options.stayOnForm) showSavedDeliveryDay(delivery);
     toast(`${existingId ? "Updated" : "Saved"} ${money.format(delivery.earnings)} from ${company}.`);
   }
 
@@ -4028,6 +4458,9 @@
     els.milesInput.value = "";
     els.minutesInput.value = "";
     els.zoneInput.value = settings.defaultZone || "";
+    const formNow = new Date();
+    if (els.deliveryDateInput) els.deliveryDateInput.value = localDateInputValue(formNow);
+    if (els.deliveryTimeInput) els.deliveryTimeInput.value = localTimeInputValue(formNow);
     if (els.merchantInput) els.merchantInput.value = "";
     els.notesInput.value = "";
     els.saveDeliveryBtn.textContent = "Save Delivery";
@@ -4045,6 +4478,8 @@
     els.milesInput.value = Number(d.miles).toFixed(1);
     els.minutesInput.value = d.minutes ? String(d.minutes) : "";
     els.zoneInput.value = d.zone || "";
+    if (els.deliveryDateInput) els.deliveryDateInput.value = localDateInputValue(d.createdAt);
+    if (els.deliveryTimeInput) els.deliveryTimeInput.value = localTimeInputValue(d.createdAt);
     if (els.merchantInput) els.merchantInput.value = d.merchant || d.restaurant || "";
     els.notesInput.value = d.notes || "";
     els.saveDeliveryBtn.textContent = "Update Delivery";
@@ -4392,7 +4827,7 @@
       savedAt: new Date().toISOString(),
       reason,
       schema: {
-        delivery: ["id", "date", "createdAt", "updatedAt", "company", "merchant", "restaurant", "merchantType", "earnings", "miles", "minutes", "zone", "note", "notes", "source", "ocrText", "ocrConfidence", "tags", "deleted", "version"],
+        delivery: ["id", "date", "createdAt", "capturedAt", "timestampSource", "timestampConfidence", "timestampEvidence", "updatedAt", "company", "merchant", "restaurant", "merchantType", "earnings", "miles", "minutes", "zone", "note", "notes", "source", "ocrText", "ocrConfidence", "tags", "deleted", "version"],
         settings: ["dailyGoal", "defaultCompany", "defaultZone", "gasPrice", "vehicleMpg", "maintenanceCostPerMile", "mileageDeductionMode", "mileageDeductionRate", "minimumDollarPerMile", "minimumDollarPerHour", "minimumPayout", "maxMiles", "customZones", "theme", "appDataVersion"],
         shift: ["active", "paused", "pausedAt", "breaks", "startedAt", "endedAt", "lastSummary", "shiftHistory", "activeHours", "recommendation", "metrics", "appDataVersion"],
         decision: ["id", "outcome", "company", "pay", "miles", "minutes", "zone", "note", "source", "createdAt", "version"],
@@ -4755,7 +5190,21 @@
   }
 
   function bindEvents() {
-    document.querySelectorAll(".tab-btn").forEach((btn) => btn.addEventListener("click", () => showTab(btn.dataset.tab)));
+    document.querySelectorAll(".tab-btn").forEach((btn) => btn.addEventListener("click", () => {
+      if (btn.dataset.tab === "add") openAdd("manual");
+      else showTab(btn.dataset.tab);
+    }));
+    if (els.calendarPrevBtn) els.calendarPrevBtn.addEventListener("click", () => moveCalendarMonth(-1));
+    if (els.calendarNextBtn) els.calendarNextBtn.addEventListener("click", () => moveCalendarMonth(1));
+    if (els.calendarTodayBtn) els.calendarTodayBtn.addEventListener("click", () => {
+      calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+      selectCalendarDay(todayKey());
+    });
+    if (els.calendarAddBtn) els.calendarAddBtn.addEventListener("click", addDeliveryToCalendarDay);
+    if (els.calendarGrid) els.calendarGrid.addEventListener("click", (event) => {
+      const day = event.target.closest("[data-calendar-day]");
+      if (day?.dataset.calendarDay) selectCalendarDay(day.dataset.calendarDay);
+    });
     document.querySelectorAll("[data-tab-jump]").forEach((btn) => btn.addEventListener("click", () => showTab(btn.dataset.tabJump)));
     document.querySelectorAll("[data-open-add]").forEach((btn) => btn.addEventListener("click", () => openAdd(btn.dataset.openAdd)));
     document.querySelectorAll("[data-quick-add-open]").forEach((btn) => btn.addEventListener("click", openQuickAdd));
@@ -4801,14 +5250,14 @@
     els.applyOcrBtn.addEventListener("click", () => applyParsedResult(lastOCRParsed));
     els.cancelOcrBtn.addEventListener("click", () => clearOCR(true));
     els.clearOcrBtn.addEventListener("click", () => clearOCR(true));
-    [els.ocrCompanyInput, els.ocrMerchantInput, els.ocrEarningsInput, els.ocrMilesInput, els.ocrMinutesInput].forEach((input) => {
+    [els.ocrCompanyInput, els.ocrMerchantInput, els.ocrEarningsInput, els.ocrMilesInput, els.ocrMinutesInput, els.ocrDateInput, els.ocrTimeInput].filter(Boolean).forEach((input) => {
       input.addEventListener("input", renderOCRSavePreview);
       input.addEventListener("change", renderOCRSavePreview);
     });
     els.quickSaveAnotherBtn.addEventListener("click", () => saveQuickDelivery({ preventDefault() {} }, { addAnother: true }));
     els.quickScreenshotInput.addEventListener("change", (event) => scanQuickScreenshot(event.target.files?.[0]));
     els.quickClearScanBtn.addEventListener("click", () => clearQuickScan(true));
-    [els.quickEarningsInput, els.quickMilesInput, els.quickMinutesInput, els.quickMerchantInput].forEach((input) => input.addEventListener("input", renderQuickAddPreview));
+    [els.quickEarningsInput, els.quickMilesInput, els.quickMinutesInput, els.quickMerchantInput, els.quickDateInput, els.quickTimeInput].filter(Boolean).forEach((input) => input.addEventListener("input", renderQuickAddPreview));
     els.quickCompanyInput.addEventListener("change", renderQuickAddPreview);
     els.saveAddAnotherBtn.addEventListener("click", () => saveDelivery({ preventDefault() {} }, { stayOnForm: true }));
     els.cancelEditBtn.addEventListener("click", () => { clearForm(false); render(); });
@@ -4830,6 +5279,13 @@
       else if (action.dataset.edit) editDelivery(action.dataset.edit);
       else if (action.dataset.duplicate) duplicateDelivery(action.dataset.duplicate);
       else if (action.dataset.openAdd) openAdd(action.dataset.openAdd);
+    });
+    if (els.calendarDayList) els.calendarDayList.addEventListener("click", (event) => {
+      const action = event.target.closest("[data-delete],[data-edit],[data-duplicate]");
+      if (!action) return;
+      if (action.dataset.delete) deleteDelivery(action.dataset.delete);
+      else if (action.dataset.edit) editDelivery(action.dataset.edit);
+      else if (action.dataset.duplicate) duplicateDelivery(action.dataset.duplicate);
     });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !els.quickAddSheet.classList.contains("hidden")) closeQuickAdd();
@@ -4875,6 +5331,11 @@
     els.offerZoneInput.value = settings.defaultZone || "";
     if (els.offerNoteInput) els.offerNoteInput.value = "";
     els.zoneInput.value = settings.defaultZone || "";
+    const initialTimestamp = new Date();
+    if (els.deliveryDateInput) els.deliveryDateInput.value = localDateInputValue(initialTimestamp);
+    if (els.deliveryTimeInput) els.deliveryTimeInput.value = localTimeInputValue(initialTimestamp);
+    if (els.ocrDateInput) els.ocrDateInput.value = localDateInputValue(initialTimestamp);
+    if (els.ocrTimeInput) els.ocrTimeInput.value = localTimeInputValue(initialTimestamp);
     renderZoneControls();
     setQuickAddDefaults(true);
     bindEvents();

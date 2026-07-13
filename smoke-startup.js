@@ -52,6 +52,7 @@ function createElement(id = '') {
 
 function createHarness(seedStorage = {}, options = {}) {
   const downloads = [];
+  const injectedScripts = [];
   const elements = new Map();
   for (const id of idMatches) elements.set(id, createElement(id));
 
@@ -81,10 +82,17 @@ function createHarness(seedStorage = {}, options = {}) {
     activeElement: null,
     hidden: false,
     body: createElement('body'),
+    head: {
+      appendChild(element) {
+        injectedScripts.push(element);
+        if (typeof options.onAppendScript === 'function') options.onAppendScript(element);
+      }
+    },
     getElementById(id) { return elements.get(id) || null; },
     querySelector(selector) {
       if (selector === '.trend-card') return trendCard;
       if (selector === 'link[rel="manifest"]') return createElement('manifest-link');
+      if (selector === 'script[data-giglens-ocr-library="true"]') return injectedScripts.at(-1) || null;
       const tabMatch = selector.match(/^\.tab-btn\[data-tab="(.+)"\]$/);
       if (tabMatch) return tabButtons.find((button) => button.dataset.tab === tabMatch[1]) || null;
       return null;
@@ -98,7 +106,27 @@ function createHarness(seedStorage = {}, options = {}) {
       if (selector === '.tab-screen') return screens;
       return [];
     },
-    createElement(tag) { return createElement(tag); },
+    createElement(tag) {
+      const element = createElement(tag);
+      if (tag === 'canvas' && options.accentColor) {
+        element.getContext = () => ({
+          drawImage() {},
+          getImageData(_x, _y, width, height) {
+            const colors = {
+              red: [220, 30, 40, 255],
+              green: [20, 180, 90, 255],
+              orange: [230, 125, 35, 255],
+              blue: [25, 90, 220, 255],
+            };
+            const color = colors[options.accentColor] || [120, 120, 120, 255];
+            const data = new Uint8ClampedArray(width * height * 4);
+            for (let index = 0; index < data.length; index += 4) data.set(color, index);
+            return { data };
+          },
+        });
+      }
+      return element;
+    },
     addEventListener() {}
   };
   const document = global.document;
@@ -118,8 +146,8 @@ function createHarness(seedStorage = {}, options = {}) {
     crypto: webcrypto,
     setInterval: () => 1,
     clearInterval: () => {},
-    setTimeout: () => 1,
-    clearTimeout: () => {},
+    setTimeout: options.setTimeout || (() => 1),
+    clearTimeout: options.clearTimeout || (() => {}),
     URL: {
       createObjectURL: (blob) => { downloads.push(blob); return 'blob:mock'; },
       revokeObjectURL: () => {}
@@ -139,6 +167,10 @@ function createHarness(seedStorage = {}, options = {}) {
     JSON,
     Promise,
     Uint8Array,
+    Uint8ClampedArray,
+    createImageBitmap: options.accentColor
+      ? async () => ({ width: 590, height: 1280, close() {} })
+      : undefined,
     Tesseract: options.Tesseract,
     globalThis: null
   };
@@ -177,7 +209,7 @@ function runStartup(seedStorage) {
   if (!harness.elements.get('profitLine').textContent.includes('$17.35')) {
     throw new Error(`central profit engine did not render expected first-delivery profit: ${harness.elements.get('profitLine').textContent}`);
   }
-  if (!harness.elements.get('taxDeduction').textContent.includes('$3.62')) {
+  if (!harness.elements.get('taxDeduction').textContent.includes('$4.10')) {
     throw new Error(`central profit engine did not render expected mileage deduction: ${harness.elements.get('taxDeduction').textContent}`);
   }
 
@@ -343,14 +375,32 @@ function runMigrationSmoke() {
   if (migratedSettings.maintenanceCostPerMile !== 0.15 || migratedSettings.maintenancePerMile !== 0.15) {
     throw new Error('settings maintenance alias migration failed');
   }
-  if (migratedSettings.mileageDeductionRate !== 0.7 || migratedSettings.taxMileageRate !== 0.7) {
+  if (migratedSettings.mileageDeductionMode !== 'custom' || migratedSettings.mileageDeductionRate !== 0.7 || migratedSettings.taxMileageRate !== 0.7) {
     throw new Error('settings mileage deduction alias migration failed');
   }
-  if (migratedSettings.defaultCompany !== 'DoorDash' || migratedSettings.theme !== 'system' || migratedSettings.appDataVersion !== 13) {
+  if (migratedSettings.defaultCompany !== 'DoorDash' || migratedSettings.theme !== 'system' || migratedSettings.appDataVersion !== 16) {
     throw new Error('invalid settings were not defaulted during migration');
   }
-  if (!Array.isArray(migratedShift.shiftHistory) || migratedShift.shiftHistory.length !== 1 || migratedShift.appDataVersion !== 13) {
+  if (!Array.isArray(migratedShift.shiftHistory) || migratedShift.shiftHistory.length !== 1 || migratedShift.appDataVersion !== 16) {
     throw new Error('shift history migration failed');
+  }
+
+  const staleDefaultHarness = createHarness({
+    'giglens.settings.v1': JSON.stringify({ mileageDeductionRate: 0.67, appDataVersion: 13 })
+  });
+  vm.runInNewContext(appCode, staleDefaultHarness.context, { filename: 'app.js' });
+  const refreshedSettings = JSON.parse(staleDefaultHarness.storage.get('giglens.settings.v1'));
+  if (refreshedSettings.mileageDeductionMode !== 'automatic' || refreshedSettings.mileageDeductionRate !== 0.76) {
+    throw new Error('legacy default mileage rate was not migrated to the automatic 2026 schedule');
+  }
+
+  const v412DefaultHarness = createHarness({
+    'giglens.settings.v1': JSON.stringify({ mileageDeductionRate: 0.725, appDataVersion: 14 })
+  });
+  vm.runInNewContext(appCode, v412DefaultHarness.context, { filename: 'app.js' });
+  const v412Settings = JSON.parse(v412DefaultHarness.storage.get('giglens.settings.v1'));
+  if (v412Settings.mileageDeductionMode !== 'automatic' || v412Settings.mileageDeductionRate !== 0.76) {
+    throw new Error('v4.1.2 default mileage rate was not migrated to automatic date-aware rates');
   }
 }
 
@@ -470,6 +520,36 @@ async function runOCRReviewSmoke() {
       throw new Error(`OCR platform detection failed for ${sample.label}: expected ${sample.expected}, got ${detectedPlatform}`);
     }
   }
+
+  const storeCases = [
+    { label: 'Instacart Schnucks store', text: 'Instacart\nFull-service batch\nStore: Schnucks\n$18.40\n6.0 mi\n45 min', merchant: 'Schnucks', platform: 'Instacart' },
+    { label: 'Spark Walmart store', text: 'Spark Driver\nPickup at Walmart\nRound Robin offer\n$16.00\n8.1 miles\n35 min', merchant: 'Walmart', platform: 'Spark' },
+    { label: 'Roadie Best Buy store', text: 'Roadie\nNew gig\nPickup at Best Buy\n$21.50\n12.3 miles\n40 min', merchant: 'Best Buy', platform: 'Roadie' }
+  ];
+
+  for (const sample of storeCases) {
+    const storeHarness = createHarness({}, {
+      Tesseract: { recognize: async () => ({ data: { text: sample.text } }) }
+    });
+    vm.runInNewContext(appCode, storeHarness.context, { filename: 'app.js' });
+    await callFirst(storeHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: `${sample.label}.png` }] } });
+    if (storeHarness.elements.get('ocrCompanyInput').value !== sample.platform) {
+      throw new Error(`Store platform detection failed for ${sample.label}`);
+    }
+    if (storeHarness.elements.get('ocrMerchantInput').value !== sample.merchant) {
+      throw new Error(`Store merchant detection failed for ${sample.label}: expected ${sample.merchant}, got ${storeHarness.elements.get('ocrMerchantInput').value}`);
+    }
+    if (storeHarness.elements.get('ocrMerchantLabel').textContent !== 'Store') {
+      throw new Error(`Store type label failed for ${sample.label}: ${storeHarness.elements.get('ocrMerchantLabel').textContent}`);
+    }
+    await callFirst(storeHarness.elements.get('saveOcrBtn'), 'click', {});
+    const storeSaved = JSON.parse(storeHarness.storage.get('giglens.deliveries.v1') || '[]');
+    const savedStore = storeSaved.find((delivery) => delivery.merchant === sample.merchant);
+    if (!savedStore || savedStore.merchantType !== 'store') {
+      throw new Error(`Saved store merchantType was not preserved for ${sample.label}`);
+    }
+  }
+  console.log('Store merchant detection cases passed');
 
   const beforeSave = JSON.parse(harness.storage.get('giglens.deliveries.v1') || '[]').length;
   await callFirst(harness.elements.get('saveOcrBtn'), 'click', {});
@@ -605,6 +685,12 @@ async function runDecisionAssistantSmoke() {
   if (!calculatorDelivery || calculatorDelivery.notes !== 'Good stack' || !calculatorDelivery.tags.includes('accept')) {
     throw new Error('save offer did not persist calculator source, note, zone, and decision tag');
   }
+  await callFirst(harness.elements.get('exportDecisionsBtn'), 'click', {});
+  const decisionExport = harness.downloads.at(-1);
+  const decisionCSV = decisionExport ? await decisionExport.text() : '';
+  if (!decisionCSV.includes('"createdAt","outcome","company"') || !decisionCSV.includes('"ACCEPT","Uber Eats"')) {
+    throw new Error('decision CSV export did not produce the logged decision ledger');
+  }
   if (harness.elements.get('offerPayInput').value || harness.elements.get('offerMilesInput').value || harness.elements.get('offerMinutesInput').value || harness.elements.get('offerNoteInput').value) {
     throw new Error('save offer should clear calculator fields after saving');
   }
@@ -633,7 +719,7 @@ function clickHistoryAction(harness, dataset) {
   return callFirst(harness.elements.get('historyList'), 'click', {
     target: {
       closest(selector) {
-        if (selector === '[data-delete],[data-edit],[data-duplicate],[data-open-add]') return { dataset };
+        if (selector === '[data-delete],[data-edit],[data-duplicate],[data-open-add],[data-history-more]') return { dataset };
         return null;
       }
     }
@@ -803,7 +889,7 @@ async function runExportCenterSmoke() {
   if (!text.includes('"date","company","gross_earnings","business_miles","mileage_deduction_rate","estimated_mileage_deduction","fuel_cost_estimate","maintenance_cost_estimate","estimated_profit"')) {
     throw new Error('tax CSV did not include required tax/export headers');
   }
-  if (!text.includes('"0.67"')) throw new Error('tax CSV did not include mileage deduction rate');
+  if (!text.includes('"0.76"')) throw new Error('tax CSV did not include the current automatic mileage deduction rate');
 
   await callFirst(harness.elements.get('exportDailyBtn'), 'click', {});
   text = await harness.downloads.at(-1).text();
@@ -932,10 +1018,8 @@ async function runDriverRecapSmoke() {
     throw new Error('driver recap status should show no-data state');
   }
 
-  const first = new Date();
-  first.setHours(11, 0, 0, 0);
-  const second = new Date();
-  second.setHours(13, 30, 0, 0);
+  const first = new Date(Date.now() - 2 * 36e5);
+  const second = new Date(Date.now() - 30 * 60e3);
   const deliveries = [
     {
       id: 'recap-1',
@@ -997,7 +1081,7 @@ async function runDriverRecapSmoke() {
   const completedShift = JSON.parse(harness.storage.get('giglens.shift.v1'));
   const savedRecap = completedShift.shiftHistory.at(-1);
   if (!savedRecap || !savedRecap.summary.includes('Weakest delivery') || !savedRecap.recommendation || !savedRecap.metrics || savedRecap.metrics.orders !== 2) {
-    throw new Error('end shift did not generate and save a full driver recap with metrics');
+    throw new Error(`end shift did not generate and save a full driver recap with metrics: ${JSON.stringify(savedRecap)}`);
   }
   if (!harness.elements.get('shiftHistoryList').innerHTML.includes('deliveries')) {
     throw new Error('saved shift recap did not render in shift history');
@@ -1016,31 +1100,28 @@ async function runDriverRecapSmoke() {
 
 
 function runMobilePolishSmoke() {
-  for (const id of ['mobileActionDock', 'dockQuickAddBtn', 'dockScanBtn', 'dockDecideBtn', 'todayBreakdownsDetails', 'quickAddHint']) {
+  for (const id of ['quickAddOpenBtn', 'quickScreenshotInput', 'todayBreakdownsDetails', 'quickAddHint']) {
     if (!idMatches.includes(id)) throw new Error(`${id} missing from phase 13 mobile polish UI`);
+  }
+  if (idMatches.includes('mobileActionDock') || html.includes('class="mobile-action-dock"')) {
+    throw new Error('obsolete floating mobile action dock should not remain in the rendered app shell');
   }
   if (!html.includes('class="skip-link"') || !html.includes('aria-modal="true"') || !html.includes('aria-atomic="true"')) {
     throw new Error('phase 13 accessibility landmarks are missing');
   }
-  if (!html.includes('id="dockScanBtn"') || !openAddModes.includes('scan')) {
-    throw new Error('mobile scan dock action is not represented in data-open-add wiring');
-  }
-  if (!html.includes('id="dockDecideBtn"') || !tabJumpNames.includes('decide')) {
-    throw new Error('mobile decide dock action is not represented in data-tab-jump wiring');
-  }
   const harness = createHarness({});
   vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
-  const dockQuick = harness.elements.get('dockQuickAddBtn');
-  if (!dockQuick.listeners.click?.length) throw new Error('mobile action dock quick add button is not wired');
-  callFirst(dockQuick, 'click', {});
+  const primaryQuickAdd = harness.elements.get('quickAddOpenBtn');
+  if (!primaryQuickAdd.listeners.click?.length) throw new Error('primary mobile quick add button is not wired');
+  callFirst(primaryQuickAdd, 'click', {});
   if (harness.elements.get('quickAddSheet').classList.contains('hidden')) {
-    throw new Error('mobile action dock quick add button did not open quick add');
+    throw new Error('primary mobile quick add button did not open quick add');
   }
   if (harness.elements.get('quickAddSheet').ariaHidden !== 'false' && harness.elements.get('quickAddSheet')['aria-hidden'] !== 'false') {
     throw new Error('quick add dialog did not update aria-hidden when opened');
   }
   const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
-  for (const token of ['mobile-action-dock', 'safe-area-inset-bottom', 'prefers-reduced-motion', 'min-height: 58px', 'loading-state', 'success-state', 'error-state']) {
+  for (const token of ['safe-area-inset-bottom', 'prefers-reduced-motion', 'min-height: 58px', 'loading-state', 'success-state', 'error-state']) {
     if (!css.includes(token)) throw new Error(`phase 13 CSS missing ${token}`);
   }
   console.log('phase 13 mobile polish cases passed');
@@ -1060,10 +1141,10 @@ function runPwaOfflinePolishSmoke() {
     if (!fs.existsSync(path.join(root, icon.src))) throw new Error(`manifest icon path missing: ${icon.src}`);
     if (!String(icon.purpose || '').includes('maskable')) throw new Error('manifest icons should include maskable purpose');
   }
-  for (const asset of ['./index.html', './styles.css', './app.js', './manifest.json', './icons/giglens-icon-192-v410.png', './icons/giglens-icon-512-v410.png', './apple-touch-icon-v410.png']) {
+  for (const asset of ['./index.html', './styles.css', './app.js', './manifest.json', './icons/giglens-icon-192.png', './icons/giglens-icon-512.png', './apple-touch-icon.png']) {
     if (!serviceWorker.includes(`"${asset}"`)) throw new Error(`service worker should cache core app shell assets: ${asset}`);
   }
-  for (const token of ['CACHE_VERSION = "v39-giglens-learning-ui-repair"', 'OFFLINE_FALLBACK', 'networkFirst', 'staleWhileRevalidate', 'Tesseract CDN']) {
+  for (const token of ['CACHE_VERSION = "v44-functional-minimalist-ui"', 'OFFLINE_FALLBACK', 'networkFirst', 'staleWhileRevalidate', 'Tesseract CDN']) {
     if (!serviceWorker.includes(token)) throw new Error(`service worker missing PWA offline token: ${token}`);
   }
   if (!html.includes('id="offlineBanner"') || !css.includes('offline-banner')) {
@@ -1352,23 +1433,20 @@ function runPrivacyDataControlSmoke() {
   console.log('phase 19 privacy and data control cases passed');
 }
 
-function runNetlifyReleasePackageSmoke() {
-  const redirectsPath = path.join(root, '_redirects');
+function runGitHubPagesReleasePackageSmoke() {
   const deploymentPath = path.join(root, 'DEPLOYMENT.md');
-  if (!fs.existsSync(redirectsPath)) throw new Error('Netlify _redirects file is missing');
   if (!fs.existsSync(deploymentPath)) throw new Error('DEPLOYMENT.md is missing');
-  const redirects = fs.readFileSync(redirectsPath, 'utf8');
-  if (!redirects.includes('/*') || !redirects.includes('/index.html') || !redirects.includes('200')) {
-    throw new Error('Netlify _redirects should provide a static fallback to index.html');
+  if (fs.existsSync(path.join(root, '_redirects')) || fs.existsSync(path.join(root, '_headers'))) {
+    throw new Error('GitHub-only release should not include Netlify-specific files');
   }
   const deployment = fs.readFileSync(deploymentPath, 'utf8');
-  for (const token of ['Netlify Drop deployment', 'GitHub Pages deployment', 'iPhone install checklist', 'iPad install checklist', 'Offline reload checklist', 'Local data persistence checklist', 'Troubleshooting']) {
+  for (const token of ['GigLens GitHub Pages Deployment', 'Publish from an iPhone or iPad', 'Install on an iPhone', 'Release verification checklist', 'Troubleshooting']) {
     if (!deployment.includes(token)) throw new Error(`DEPLOYMENT.md missing ${token}`);
   }
-  for (const rel of ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '_redirects', '.nojekyll', '404.html', 'DEPLOYMENT.md', 'icons/giglens-icon-180.png', 'icons/giglens-icon-180-v410.png', 'icons/giglens-icon-192-v410.png', 'icons/giglens-icon-512-v410.png', 'icons/giglens-icon-1024-v410.png', 'apple-touch-icon-v410.png', 'favicon-v410.png', 'apple-touch-icon.png', 'favicon.png']) {
-    if (!fs.existsSync(path.join(root, rel))) throw new Error(`Netlify release package missing root asset ${rel}`);
+  for (const rel of ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '.nojekyll', '404.html', 'DEPLOYMENT.md', 'icons/giglens-icon-180.png', 'icons/giglens-icon-192.png', 'icons/giglens-icon-512.png', 'icons/giglens-icon-1024.png', 'apple-touch-icon.png', 'favicon.png']) {
+    if (!fs.existsSync(path.join(root, rel))) throw new Error(`GitHub Pages release package missing root asset ${rel}`);
   }
-  const runtimeText = ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '_redirects', '404.html']
+  const runtimeText = ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '404.html']
     .map((rel) => fs.readFileSync(path.join(root, rel), 'utf8'))
     .join('\n');
   if (/https?:\/\/(localhost|127\.0\.0\.1)/.test(runtimeText)) {
@@ -1383,7 +1461,7 @@ function runNetlifyReleasePackageSmoke() {
   if (!fs.readFileSync(path.join(root, '404.html'), 'utf8').includes('Designed by Tech Phactory Solutions')) {
     throw new Error('GitHub Pages fallback should include app branding');
   }
-  console.log('phase 20 Netlify release package cases passed; GitHub Pages package cases passed');
+  console.log('GitHub Pages release package cases passed');
 }
 
 async function runQuickScreenshotAddSmoke() {
@@ -1417,14 +1495,14 @@ async function runQuickScreenshotAddSmoke() {
     throw new Error('quick screenshot review did not confirm its scan pattern in local learning');
   }
 
-  const offlineHarness = createHarness({}, { navigator: { onLine: false } });
+  const offlineHarness = createHarness({}, { navigator: { onLine: false }, console: { ...console, error() {} } });
   vm.runInNewContext(appCode, offlineHarness.context, { filename: 'app.js' });
   callFirst(offlineHarness.elements.get('quickAddOpenBtn'), 'click', {});
   await callFirst(offlineHarness.elements.get('quickScreenshotInput'), 'change', { target: { files: [{ name: 'offline.png' }] } });
   if (!offlineHarness.elements.get('quickScanStatus').textContent.includes('OCR library is not loaded yet')) {
     throw new Error('quick screenshot unavailable OCR should not crash and should show a clear message');
   }
-  console.log('4.1.0 GigLens scan repair cases passed');
+  console.log('4.3.0 GigLens merchant/store audit cases passed');
 }
 
 
@@ -1464,6 +1542,27 @@ async function runOCRLearningSmoke() {
   if (!second.elements.get('ocrLearningHint').textContent.includes('Local learning helped')) {
     throw new Error('OCR review did not explain when local learning improved a scan');
   }
+
+  const genericText = 'Delivery offer\nPickup\nLocal Kitchen\n$8.50\n3.0 miles\n20 min';
+  const genericCorrectionHarness = createHarness({}, {
+    Tesseract: { recognize: async () => ({ data: { text: genericText } }) }
+  });
+  vm.runInNewContext(appCode, genericCorrectionHarness.context, { filename: 'app.js' });
+  await callFirst(genericCorrectionHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'generic-correction.png' }] } });
+  genericCorrectionHarness.elements.get('ocrCompanyInput').value = 'DoorDash';
+  await callFirst(genericCorrectionHarness.elements.get('saveOcrBtn'), 'click', {});
+  const genericLearning = JSON.parse(genericCorrectionHarness.storage.get('giglens.ocrLearning.v1') || '{}');
+  const unrelatedGenericHarness = createHarness({
+    'giglens.ocrLearning.v1': JSON.stringify(genericLearning)
+  }, {
+    Tesseract: { recognize: async () => ({ data: { text: 'Delivery offer\nPickup\nCorner Cafe\n$11.25\n4.0 miles\n24 min' } }) }
+  });
+  vm.runInNewContext(appCode, unrelatedGenericHarness.context, { filename: 'app.js' });
+  await callFirst(unrelatedGenericHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'unrelated-generic.png' }] } });
+  if (unrelatedGenericHarness.elements.get('ocrCompanyInput').value !== 'Other') {
+    throw new Error('generic delivery words incorrectly transferred a learned platform to another app screenshot');
+  }
+
   callFirst(second.elements.get('resetOcrLearningBtn'), 'click', {});
   const resetLearning = JSON.parse(second.storage.get('giglens.ocrLearning.v1') || '{}');
   if (!Array.isArray(resetLearning.corrections) || resetLearning.corrections.length !== 0) {
@@ -1472,12 +1571,352 @@ async function runOCRLearningSmoke() {
   console.log('local OCR correction learning cases passed');
 }
 
+async function runScreenshotAccentSmoke() {
+  const genericText = 'Delivery offer\nPickup Burger King\n$9.98\n3.2 miles\n20 min';
+  const greenHarness = createHarness({}, {
+    accentColor: 'green',
+    Tesseract: { recognize: async () => ({ data: { text: genericText } }) }
+  });
+  vm.runInNewContext(appCode, greenHarness.context, { filename: 'app.js' });
+  await callFirst(greenHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'green-offer.png', type: 'image/png', size: 1000 }] } });
+  if (greenHarness.elements.get('ocrCompanyInput').value !== 'Uber Eats') {
+    throw new Error('strong green interface accent did not assist an otherwise weak Uber Eats scan');
+  }
+
+  const conflictHarness = createHarness({}, {
+    accentColor: 'green',
+    Tesseract: { recognize: async () => ({ data: { text: `DoorDash\n${genericText}` } }) }
+  });
+  vm.runInNewContext(appCode, conflictHarness.context, { filename: 'app.js' });
+  await callFirst(conflictHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'strong-text.png', type: 'image/png', size: 1000 }] } });
+  if (conflictHarness.elements.get('ocrCompanyInput').value !== 'DoorDash') {
+    throw new Error('weak color evidence overrode a strong DoorDash text fingerprint');
+  }
+
+  const blueHarness = createHarness({}, {
+    accentColor: 'blue',
+    Tesseract: { recognize: async () => ({ data: { text: genericText } }) }
+  });
+  vm.runInNewContext(appCode, blueHarness.context, { filename: 'app.js' });
+  await callFirst(blueHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'blue-offer.png', type: 'image/png', size: 1000 }] } });
+  if (blueHarness.elements.get('ocrCompanyInput').value !== 'Other') {
+    throw new Error('blue accent should remain ambiguous between Spark and Amazon without text evidence');
+  }
+  console.log('conservative screenshot accent detection cases passed');
+}
+
+function currencyValue(value) {
+  return Number(String(value || '').replace(/[^0-9.-]/g, '')) || 0;
+}
+
+function runBreakAdjustedShiftSmoke() {
+  const now = Date.now();
+  const startedAt = new Date(now - 2 * 36e5).toISOString();
+  const breakStartedAt = new Date(now - 90 * 60e3).toISOString();
+  const breakEndedAt = new Date(now - 30 * 60e3).toISOString();
+  const deliveryTime = new Date(now - 15 * 60e3).toISOString();
+  const harness = createHarness({
+    'giglens.deliveries.v1': JSON.stringify([{
+      id: 'break-order', company: 'DoorDash', earnings: 60, miles: 10, minutes: 0,
+      createdAt: deliveryTime, updatedAt: deliveryTime, source: 'manual'
+    }]),
+    'giglens.shift.v1': JSON.stringify({
+      active: true,
+      paused: false,
+      startedAt,
+      breaks: [{ startedAt: breakStartedAt, endedAt: breakEndedAt }],
+      shiftHistory: []
+    })
+  });
+  vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
+  const hourly = currencyValue(harness.elements.get('avgHour').textContent);
+  if (hourly < 59 || hourly > 61) {
+    throw new Error(`paused break was not excluded from hourly pace: ${harness.elements.get('avgHour').textContent}`);
+  }
+  if (!harness.elements.get('timeWorking').textContent.includes('1h 00m')) {
+    throw new Error(`active shift time did not exclude the saved break: ${harness.elements.get('timeWorking').textContent}`);
+  }
+
+  const firstStart = new Date(now - 2 * 36e5).toISOString();
+  const firstEnd = new Date(now - 1.5 * 36e5).toISOString();
+  const secondStart = new Date(now - 1 * 36e5).toISOString();
+  const secondEnd = new Date(now - 0.5 * 36e5).toISOString();
+  const multiShiftHarness = createHarness({
+    'giglens.deliveries.v1': JSON.stringify([
+      { id: 'shift-one-order', company: 'DoorDash', earnings: 30, miles: 5, minutes: 0, createdAt: new Date(now - 1.75 * 36e5).toISOString(), updatedAt: new Date(now - 1.75 * 36e5).toISOString(), source: 'manual' },
+      { id: 'shift-two-order', company: 'Uber Eats', earnings: 30, miles: 5, minutes: 0, createdAt: new Date(now - 0.75 * 36e5).toISOString(), updatedAt: new Date(now - 0.75 * 36e5).toISOString(), source: 'manual' }
+    ]),
+    'giglens.shift.v1': JSON.stringify({
+      active: false,
+      startedAt: secondStart,
+      endedAt: secondEnd,
+      shiftHistory: [
+        { id: 'shift-one', startedAt: firstStart, endedAt: firstEnd, activeHours: 0.5, breaks: [], metrics: { hours: 0.5 } },
+        { id: 'shift-two', startedAt: secondStart, endedAt: secondEnd, activeHours: 0.5, breaks: [], metrics: { hours: 0.5 } }
+      ]
+    })
+  });
+  vm.runInNewContext(appCode, multiShiftHarness.context, { filename: 'app.js' });
+  const multiShiftHourly = currencyValue(multiShiftHarness.elements.get('avgHour').textContent);
+  if (multiShiftHourly < 59 || multiShiftHourly > 61) {
+    throw new Error(`multiple same-day shifts were not combined correctly: ${multiShiftHarness.elements.get('avgHour').textContent}; ${multiShiftHarness.elements.get('timeWorking').textContent}; ${multiShiftHarness.storage.get('giglens.shift.v1')}`);
+  }
+
+  const pausedAt = new Date(now - 10 * 60e3).toISOString();
+  const shortStart = new Date(now - 20 * 60e3).toISOString();
+  const pausedAtHarness = createHarness({
+    'giglens.deliveries.v1': JSON.stringify([{
+      id: 'paused-at-order', company: 'DoorDash', earnings: 10, miles: 2, minutes: 0,
+      createdAt: new Date(now - 5 * 60e3).toISOString(), updatedAt: new Date(now - 5 * 60e3).toISOString(), source: 'manual'
+    }]),
+    'giglens.shift.v1': JSON.stringify({ active: true, paused: true, pausedAt, startedAt: shortStart, breaks: [] })
+  });
+  vm.runInNewContext(appCode, pausedAtHarness.context, { filename: 'app.js' });
+  const repairedPausedAtShift = JSON.parse(pausedAtHarness.storage.get('giglens.shift.v1'));
+  if (!repairedPausedAtShift.paused || repairedPausedAtShift.breaks.length !== 1 || repairedPausedAtShift.breaks[0].endedAt !== null) {
+    throw new Error('pausedAt-only imported shift was not repaired with an open break interval');
+  }
+  if (pausedAtHarness.elements.get('pauseShiftBtn').textContent !== 'Resume') {
+    throw new Error('repaired paused shift did not render a working Resume action');
+  }
+
+  const openBreakHarness = createHarness({
+    'giglens.shift.v1': JSON.stringify({
+      active: true, paused: false, startedAt: shortStart,
+      breaks: [{ startedAt: pausedAt, endedAt: null }]
+    })
+  });
+  vm.runInNewContext(appCode, openBreakHarness.context, { filename: 'app.js' });
+  const repairedOpenBreakShift = JSON.parse(openBreakHarness.storage.get('giglens.shift.v1'));
+  if (!repairedOpenBreakShift.paused || openBreakHarness.elements.get('pauseShiftBtn').textContent !== 'Resume') {
+    throw new Error('open imported break did not restore the shift paused state');
+  }
+
+  const overlapStart = new Date(now - 30 * 60e3).toISOString();
+  const overlapHarness = createHarness({
+    'giglens.deliveries.v1': JSON.stringify([{
+      id: 'overlap-order', company: 'Uber Eats', earnings: 15, miles: 2, minutes: 0,
+      createdAt: new Date(now - 5 * 60e3).toISOString(), updatedAt: new Date(now - 5 * 60e3).toISOString(), source: 'manual'
+    }]),
+    'giglens.shift.v1': JSON.stringify({
+      active: true, paused: false, startedAt: overlapStart,
+      breaks: [
+        { startedAt: new Date(now - 25 * 60e3).toISOString(), endedAt: new Date(now - 15 * 60e3).toISOString() },
+        { startedAt: new Date(now - 20 * 60e3).toISOString(), endedAt: new Date(now - 10 * 60e3).toISOString() }
+      ]
+    })
+  });
+  vm.runInNewContext(appCode, overlapHarness.context, { filename: 'app.js' });
+  const overlapShift = JSON.parse(overlapHarness.storage.get('giglens.shift.v1'));
+  const overlapHourly = currencyValue(overlapHarness.elements.get('avgHour').textContent);
+  if (overlapShift.breaks.length !== 1 || overlapHourly < 59 || overlapHourly > 61) {
+    throw new Error(`overlapping imported breaks were double-counted instead of merged: ${overlapHarness.elements.get('avgHour').textContent}`);
+  }
+  console.log('break-adjusted and multi-shift timing cases passed');
+}
+
+function runManualZeroMileageSmoke() {
+  const harness = createHarness({});
+  vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
+  harness.elements.get('companyInput').value = 'DoorDash';
+  harness.elements.get('earningsInput').value = '12.50';
+  harness.elements.get('milesInput').value = '0';
+  harness.elements.get('minutesInput').value = '20';
+  callFirst(harness.elements.get('deliveryForm'), 'submit', { preventDefault() {} });
+  const saved = JSON.parse(harness.storage.get('giglens.deliveries.v1') || '[]');
+  if (!saved.some((delivery) => delivery.earnings === 12.5 && delivery.miles === 0)) {
+    throw new Error('manual entry should preserve an explicit zero-mile delivery like Quick Add does');
+  }
+  console.log('manual zero-mile consistency case passed');
+}
+
+async function runMileageScheduleSmoke() {
+  const rows = [
+    { id: 'tax-first-half', company: 'DoorDash', earnings: 20, miles: 10, minutes: 30, createdAt: '2026-01-15T18:00:00.000Z', updatedAt: '2026-01-15T18:00:00.000Z', source: 'manual' },
+    { id: 'tax-second-half', company: 'Uber Eats', earnings: 20, miles: 10, minutes: 30, createdAt: '2026-07-15T18:00:00.000Z', updatedAt: '2026-07-15T18:00:00.000Z', source: 'manual' },
+  ];
+  const harness = createHarness({
+    'giglens.deliveries.v1': JSON.stringify(rows),
+    'giglens.settings.v1': JSON.stringify({ mileageDeductionMode: 'automatic', mileageDeductionRate: 0.76, appDataVersion: 15 })
+  });
+  vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
+  await callFirst(harness.elements.get('exportTaxBtn'), 'click', {});
+  const csv = await harness.downloads.at(-1).text();
+  if (!csv.includes('"0.725","7.25"') || !csv.includes('"0.76","7.6"')) {
+    throw new Error(`date-aware 2026 mileage rates were not applied per delivery in the tax export: ${csv}`);
+  }
+  if (!harness.elements.get('taxRateLabel').textContent.includes('Auto')) {
+    throw new Error('dashboard tax rate does not explain that automatic scheduling is active');
+  }
+  console.log('date-aware mileage deduction schedule cases passed');
+}
+
+function runHistoryPaginationSmoke() {
+  const base = new Date();
+  base.setHours(12, 0, 0, 0);
+  const rows = Array.from({ length: 35 }, (_, index) => {
+    const date = new Date(base);
+    date.setDate(date.getDate() - index);
+    const createdAt = date.toISOString();
+    return { id: `history-${index}`, company: 'DoorDash', earnings: 10 + index, miles: 2, minutes: 20, createdAt, updatedAt: createdAt, source: 'manual' };
+  });
+  const harness = createHarness({ 'giglens.deliveries.v1': JSON.stringify(rows) });
+  vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
+  const initialHtml = harness.elements.get('historyList').innerHTML;
+  const initialDays = (initialHtml.match(/data-history-day=/g) || []).length;
+  if (initialDays !== 30 || !initialHtml.includes('5 days remaining')) {
+    throw new Error(`history did not render the first 30 days with a real load-more action: ${initialDays}`);
+  }
+  callFirst(harness.elements.get('historyList'), 'click', {
+    target: { closest: () => ({ dataset: { historyMore: '' } }) }
+  });
+  const expandedHtml = harness.elements.get('historyList').innerHTML;
+  const expandedDays = (expandedHtml.match(/data-history-day=/g) || []).length;
+  if (expandedDays !== 35 || expandedHtml.includes('days remaining')) {
+    throw new Error(`history load-more action did not render all remaining days: ${expandedDays}`);
+  }
+  console.log('progressive history rendering cases passed');
+}
+
+async function runOCRLifecycleSmoke() {
+  let injectedOCRScript = null;
+  const loaderHarness = createHarness({}, {
+    navigator: { onLine: true, clipboard: { writeText: async () => {} } },
+    onAppendScript(script) { injectedOCRScript = script; }
+  });
+  vm.runInNewContext(appCode, loaderHarness.context, { filename: 'app.js' });
+  if (injectedOCRScript) throw new Error('normal app startup should not be blocked by an eager OCR script');
+  const loaderScan = callFirst(loaderHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'loader.png', type: 'image/png', size: 1000 }] } });
+  await Promise.resolve();
+  if (!injectedOCRScript || !String(injectedOCRScript.src).includes('tesseract.js@5.1.1')) {
+    throw new Error('scanner did not load the pinned OCR library on demand');
+  }
+  loaderHarness.context.Tesseract = {
+    recognize: async () => ({ data: { text: 'DoorDash\nPickup Chipotle\n$11.00\n3.0 miles\n18 min' } })
+  };
+  injectedOCRScript.onload();
+  await loaderScan;
+  if (!loaderHarness.elements.get('scanStatus').textContent.includes('Scan complete')) {
+    throw new Error('on-demand OCR library load did not continue the pending scan');
+  }
+
+  let terminateCalls = 0;
+  const cleanupHarness = createHarness({}, {
+    console: { ...console, warn() {} },
+    setTimeout(callback, delay) {
+      if (delay === 3000) queueMicrotask(callback);
+      return delay;
+    },
+    Tesseract: {
+      createWorker: async () => ({
+        recognize: async () => ({ data: { text: 'DoorDash\nPickup Chipotle\n$10.00\n2.0 miles\n15 min' } }),
+        terminate: () => {
+          terminateCalls += 1;
+          return new Promise(() => {});
+        }
+      })
+    }
+  });
+  vm.runInNewContext(appCode, cleanupHarness.context, { filename: 'app.js' });
+  await callFirst(cleanupHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'cleanup.png', type: 'image/png', size: 1200 }] } });
+  if (terminateCalls !== 1 || !cleanupHarness.elements.get('scanStatus').textContent.includes('Scan complete')) {
+    throw new Error('a stalled OCR worker cleanup kept the scanner from completing safely');
+  }
+
+  const deferred = [];
+  const staleHarness = createHarness({}, {
+    Tesseract: {
+      recognize: () => new Promise((resolve) => deferred.push(resolve))
+    }
+  });
+  vm.runInNewContext(appCode, staleHarness.context, { filename: 'app.js' });
+  const firstScan = callFirst(staleHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'first.png', type: 'image/png', size: 1000 }] } });
+  await Promise.resolve();
+  const secondScan = callFirst(staleHarness.elements.get('screenshotInput'), 'change', { target: { files: [{ name: 'second.png', type: 'image/png', size: 1000 }] } });
+  await Promise.resolve();
+  if (deferred.length !== 2) throw new Error('concurrent OCR test did not start both scans');
+  deferred[1]({ data: { text: 'Uber Eats\nPickup Starbucks\n$18.00\n4.0 miles\n20 min' } });
+  await secondScan;
+  deferred[0]({ data: { text: 'DoorDash\nPickup Taco Bell\n$7.00\n9.0 miles\n45 min' } });
+  await firstScan;
+  if (staleHarness.elements.get('ocrCompanyInput').value !== 'Uber Eats' || staleHarness.elements.get('ocrEarningsInput').value !== '18.00') {
+    throw new Error('an older OCR result overwrote the newest selected screenshot');
+  }
+  console.log('bounded OCR cleanup and stale-scan protection cases passed');
+}
+
+
+async function runCalendarTimestampSmoke() {
+  const sampleText = '5:27 PM Sun Jul 5, 2026 Safari\nUber Eats\nExclusive\nPickup from Burger King\n$9.98\n20 min (3.2 mi) total';
+  const harness = createHarness({}, {
+    Tesseract: { recognize: async () => ({ data: { text: sampleText } }) }
+  });
+  vm.runInNewContext(appCode, harness.context, { filename: 'app.js' });
+
+  for (const id of ['calendarGrid', 'calendarMonthLabel', 'calendarSelectedLabel', 'calendarDaySummary', 'calendarDayList', 'calendarPrevBtn', 'calendarNextBtn', 'calendarTodayBtn', 'calendarAddBtn', 'deliveryDateInput', 'deliveryTimeInput', 'ocrDateInput', 'ocrTimeInput', 'quickDateInput', 'quickTimeInput']) {
+    if (!harness.elements.get(id)) throw new Error(`calendar/timestamp element missing: ${id}`);
+  }
+  await callFirst(harness.elements.get('screenshotInput'), 'change', {
+    target: { files: [{ name: 'uber-july-5.png', lastModified: new Date(2026, 6, 5, 17, 30).getTime() }] }
+  });
+  if (harness.elements.get('ocrDateInput').value !== '2026-07-05') {
+    throw new Error(`OCR date detection failed: ${harness.elements.get('ocrDateInput').value}`);
+  }
+  if (harness.elements.get('ocrTimeInput').value !== '17:27') {
+    throw new Error(`OCR time detection failed: ${harness.elements.get('ocrTimeInput').value}`);
+  }
+  if (!harness.elements.get('ocrTimestamp').textContent.includes('2026')) {
+    throw new Error('OCR review did not display the detected timestamp');
+  }
+
+  const ambiguousClockHarness = createHarness({}, {
+    Tesseract: { recognize: async () => ({ data: { text: '8:00 Sun Jul 5, 2026 Safari\nDoorDash\n$7.50\n2.5 mi\n18 min\nPickup Taco Bell' } }) }
+  });
+  vm.runInNewContext(appCode, ambiguousClockHarness.context, { filename: 'app.js' });
+  await callFirst(ambiguousClockHarness.elements.get('screenshotInput'), 'change', {
+    target: { files: [{ name: 'evening-status.png', lastModified: new Date(2026, 6, 5, 20, 2).getTime() }] }
+  });
+  if (ambiguousClockHarness.elements.get('ocrTimeInput').value !== '20:00') {
+    throw new Error(`12-hour status-bar time did not use image metadata to infer PM: ${ambiguousClockHarness.elements.get('ocrTimeInput').value}`);
+  }
+
+  await callFirst(harness.elements.get('saveOcrBtn'), 'click', {});
+  let saved = JSON.parse(harness.storage.get('giglens.deliveries.v1') || '[]');
+  const first = saved.find((row) => row.earnings === 9.98);
+  if (!first || first.date !== '2026-07-05' || first.timestampSource !== 'ocr' || first.timestampConfidence < 80 || !first.capturedAt) {
+    throw new Error('reviewed OCR did not save calendar timestamp metadata');
+  }
+  if (!harness.elements.get('tab-calendar').classList.contains('active')) {
+    throw new Error('historical OCR save did not route to Calendar');
+  }
+
+  harness.elements.get('companyInput').value = 'DoorDash';
+  harness.elements.get('deliveryDateInput').value = '2026-07-05';
+  harness.elements.get('deliveryTimeInput').value = '18:00';
+  harness.elements.get('earningsInput').value = '8.00';
+  harness.elements.get('milesInput').value = '2.0';
+  harness.elements.get('minutesInput').value = '20';
+  callFirst(harness.elements.get('deliveryForm'), 'submit', { preventDefault() {} });
+  saved = JSON.parse(harness.storage.get('giglens.deliveries.v1') || '[]');
+  if (!saved.some((row) => row.earnings === 8 && row.date === '2026-07-05' && row.timestampSource === 'manual')) {
+    throw new Error('manual historical delivery did not retain selected calendar date/time');
+  }
+  if (!harness.elements.get('calendarDaySummary').innerHTML.includes('53m') || !harness.elements.get('calendarDaySummary').innerHTML.includes('screenshot estimate')) {
+    throw new Error(`calendar work-session estimate was not rendered: ${harness.elements.get('calendarDaySummary').innerHTML}`);
+  }
+  callFirst(harness.elements.get('calendarAddBtn'), 'click', {});
+  if (harness.elements.get('deliveryDateInput').value !== '2026-07-05' || !harness.elements.get('tab-add').classList.contains('active')) {
+    throw new Error('Add to day did not open historical entry with selected calendar date');
+  }
+  console.log('calendar history and screenshot timestamp cases passed');
+}
+
 function runFixedOverlayPositionSmoke() {
   const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
-  for (const token of ['.toast { position: fixed', '.quick-add-sheet { position: fixed', '.bottom-tabs { position: fixed', '.skip-link { position: fixed', '.mobile-action-dock { position: fixed']) {
+  for (const token of ['.toast { position: fixed', '.quick-add-sheet { position: fixed', '.bottom-tabs { position: fixed', '.skip-link { position: fixed']) {
     if (!css.includes(token)) throw new Error(`fixed overlay safety token missing: ${token}`);
   }
-  if (css.includes('.app-shell,\n.toast,\n.quick-add-sheet,\n.bottom-tabs,\n.mobile-action-dock,\n.skip-link { position: relative')) {
+  if (css.includes('.app-shell,\n.toast,\n.quick-add-sheet,\n.bottom-tabs,\n.skip-link { position: relative')) {
     throw new Error('modern UI refresh demoted fixed overlays to relative positioning');
   }
   console.log('fixed overlay position safety cases passed');
@@ -1496,7 +1935,7 @@ function runPublicSecretScanSmoke() {
     /xox[baprs]-[A-Za-z0-9\-]{20,}/,
     /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
   ];
-  for (const rel of ['index.html', 'app.js', 'styles.css', 'manifest.json', 'service-worker.js', '404.html', 'package.json', 'README.md', 'AUDIT_REPORT.md', 'CHANGELOG.md', 'DEPLOYMENT.md', 'SECURITY_AUDIT.md', 'CLAUDE_REVIEW_AUDIT.md', 'OCR_LEARNING_AUDIT.md']) {
+  for (const rel of ['index.html', 'app.js', 'styles.css', 'manifest.json', 'service-worker.js', '404.html', 'package.json', 'README.md', 'AUDIT_REPORT.md', 'CHANGELOG.md', 'DEPLOYMENT.md', 'SECURITY_AUDIT.md', 'CLAUDE_REVIEW_AUDIT.md', 'OCR_LEARNING_AUDIT.md', 'CALENDAR_TIMESTAMP_AUDIT.md']) {
     const text = fs.readFileSync(path.join(root, rel), 'utf8');
     for (const pattern of patterns) {
       if (pattern.test(text)) throw new Error(`possible exposed secret in ${rel}`);
@@ -1520,8 +1959,15 @@ async function main() {
   await runBackupSafetySmoke();
   await runDecisionAssistantSmoke();
   await runOCRReviewSmoke();
+  await runCalendarTimestampSmoke();
   await runQuickScreenshotAddSmoke();
   await runOCRLearningSmoke();
+  await runScreenshotAccentSmoke();
+  runBreakAdjustedShiftSmoke();
+  runManualZeroMileageSmoke();
+  await runMileageScheduleSmoke();
+  runHistoryPaginationSmoke();
+  await runOCRLifecycleSmoke();
   await runDriverRecapSmoke();
   runMobilePolishSmoke();
   runPwaOfflinePolishSmoke();
@@ -1529,7 +1975,7 @@ async function main() {
   runBestTimeInsightsSmoke();
   runZoneHeatmapSmoke();
   runPrivacyDataControlSmoke();
-  runNetlifyReleasePackageSmoke();
+  runGitHubPagesReleasePackageSmoke();
   runFixedOverlayPositionSmoke();
   runPublicSecretScanSmoke();
   console.log('GigLens startup smoke test passed');

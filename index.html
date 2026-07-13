@@ -98,6 +98,7 @@
             <div class="tool-disclosure-actions">
               <button class="secondary-btn" data-open-add="manual" type="button" aria-label="Open manual delivery entry">Manual Entry</button>
               <button class="secondary-btn" data-tab-jump="decide" type="button" aria-label="Open the accept calculator">Accept Calculator</button>
+              <button class="secondary-btn" data-tab-jump="analytics" type="button" aria-label="Open analytics">Analytics</button>
             </div>
           </details>
         </section>
@@ -233,6 +234,7 @@
               <div><span>Earnings</span><strong id="ocrEarnings">—</strong></div>
               <div><span>Miles</span><strong id="ocrMiles">—</strong></div>
               <div><span>Minutes</span><strong id="ocrMinutes">—</strong></div>
+              <div><span>Date & time</span><strong id="ocrTimestamp">Needs review</strong></div>
               <div><span>Confidence</span><strong id="ocrConfidence">—</strong></div>
             </div>
             <div class="ocr-edit-grid" aria-label="Editable OCR fields">
@@ -260,6 +262,12 @@
               </label>
               <label>Minutes
                 <input id="ocrMinutesInput" type="text" inputmode="numeric" enterkeyhint="done" placeholder="31" />
+              </label>
+              <label>Screenshot date
+                <input id="ocrDateInput" type="date" autocomplete="off" />
+              </label>
+              <label>Screenshot time
+                <input id="ocrTimeInput" type="time" autocomplete="off" />
               </label>
             </div>
             <div id="ocrSavePreview" class="delivery-preview">Review the detected fields before saving.</div>
@@ -292,6 +300,16 @@
               <option value="Other">Other</option>
             </select>
           </label>
+
+          <div class="two-col delivery-time-fields">
+            <label>Delivery date
+              <input id="deliveryDateInput" type="date" autocomplete="off" required />
+            </label>
+            <label>Delivery time
+              <input id="deliveryTimeInput" type="time" autocomplete="off" required />
+            </label>
+          </div>
+          <p class="muted small timestamp-help">Screenshot scans fill these automatically when a readable date or time is present. You can correct them before saving.</p>
 
           <div class="two-col">
             <label>Earnings
@@ -392,6 +410,41 @@
           <div id="decisionLogMetrics" class="decision-log-metrics" aria-label="Today's decision totals"></div>
           <div id="decisionLogList" class="decision-log-list empty">No order decisions logged yet.</div>
           <button id="exportDecisionsBtn" class="secondary-btn full" type="button">Export Decision CSV</button>
+        </section>
+      </section>
+
+      <section id="tab-calendar" class="tab-screen">
+        <section class="panel calendar-panel">
+          <div class="section-head calendar-heading">
+            <div>
+              <p class="eyebrow">Work history</p>
+              <h2>Calendar</h2>
+            </div>
+            <button id="calendarTodayBtn" class="ghost-btn compact" type="button">Today</button>
+          </div>
+          <p class="muted">Browse previous days, correct delivery dates and times, and review earnings and estimated work sessions from screenshot timestamps.</p>
+          <div class="calendar-toolbar" aria-label="Calendar month controls">
+            <button id="calendarPrevBtn" class="ghost-btn compact" type="button" aria-label="Previous month">‹</button>
+            <strong id="calendarMonthLabel">Month</strong>
+            <button id="calendarNextBtn" class="ghost-btn compact" type="button" aria-label="Next month">›</button>
+          </div>
+          <div class="calendar-weekdays" aria-hidden="true">
+            <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+          </div>
+          <div id="calendarGrid" class="calendar-grid" role="grid" aria-label="Delivery history calendar"></div>
+        </section>
+
+        <section class="panel calendar-day-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Selected day</p>
+              <h2 id="calendarSelectedLabel">Today</h2>
+            </div>
+            <button id="calendarAddBtn" class="primary-btn compact" type="button">Add to day</button>
+          </div>
+          <div id="calendarDaySummary" class="calendar-day-summary empty">Select a day to review its earnings, mileage, and work time.</div>
+          <p id="calendarWorkNote" class="muted small">Work time uses saved shift breaks when available; otherwise it is estimated from screenshot timestamps and order durations.</p>
+          <div id="calendarDayList" class="history-list empty">No deliveries saved for this day.</div>
         </section>
       </section>
 
@@ -752,6 +805,15 @@
             </label>
           </div>
 
+          <div class="quick-field-grid delivery-time-fields">
+            <label>Delivery date
+              <input id="quickDateInput" type="date" autocomplete="off" />
+            </label>
+            <label>Delivery time
+              <input id="quickTimeInput" type="time" autocomplete="off" />
+            </label>
+          </div>
+
           <details id="quickNotesDetails" class="quick-notes">
             <summary>Add note</summary>
             <label>Notes optional
@@ -771,12 +833,27 @@
     <footer class="app-credit" aria-label="App credit">Designed by Tech Phactory Solutions</footer>
 
     <nav class="bottom-tabs" aria-label="App navigation">
-      <button class="tab-btn active" data-tab="today" type="button" aria-label="Open Today dashboard">Today</button>
-      <button class="tab-btn" data-tab="add" type="button" aria-label="Open Add delivery screen">Add</button>
-      <button class="tab-btn" data-tab="decide" type="button" aria-label="Open Accept Calculator">Decide</button>
-      <button class="tab-btn" data-tab="history" type="button" aria-label="Open History and exports">History</button>
-      <button class="tab-btn" data-tab="analytics" type="button" aria-label="Open Analytics">Analytics</button>
-      <button class="tab-btn" data-tab="settings" type="button" aria-label="Open Settings">Settings</button>
+      <button class="tab-btn active" data-tab="today" type="button" aria-label="Open Today dashboard">
+        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 12 6l7 6.5v6a1 1 0 0 1-1 1h-4v-5h-4v5H6a1 1 0 0 1-1-1z"/></svg><span>Today</span>
+      </button>
+      <button class="tab-btn" data-tab="calendar" type="button" aria-label="Open delivery calendar">
+        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3v3M18 3v3M4 8h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"/></svg><span>Calendar</span>
+      </button>
+      <button class="tab-btn" data-tab="add" type="button" aria-label="Open Add delivery screen">
+        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Add</span>
+      </button>
+      <button class="tab-btn" data-tab="decide" type="button" aria-label="Open Accept Calculator">
+        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg><span>Decide</span>
+      </button>
+      <button class="tab-btn" data-tab="history" type="button" aria-label="Open History and exports">
+        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.5M4 4v4.5h4.5M12 8v5l3 2"/></svg><span>History</span>
+      </button>
+      <button class="tab-btn" data-tab="analytics" type="button" aria-label="Open Analytics">
+        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7M3 19h18"/></svg><span>Analytics</span>
+      </button>
+      <button class="tab-btn" data-tab="settings" type="button" aria-label="Open Settings">
+        <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="m19.4 15 .1 2.2-2.3 2.3-2.2-.1-1.6.9-.9 2h-3l-.9-2-1.6-.9-2.2.1-2.3-2.3.1-2.2-.9-1.6-2-.9v-3l2-.9.9-1.6-.1-2.2 2.3-2.3 2.2.1 1.6-.9.9-2h3l.9 2 1.6.9 2.2-.1 2.3 2.3-.1 2.2.9 1.6 2 .9v3l-2 .9Z"/></svg><span>Settings</span>
+      </button>
     </nav>
   </div>
 

@@ -39,7 +39,7 @@ class AssetParser(HTMLParser):
                     self.assets.append(src)
 
 
-class DriveLedgerStaticAppTests(unittest.TestCase):
+class GigLensStaticAppTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.html = (PROJECT_ROOT / 'index.html').read_text(encoding='utf-8')
@@ -50,7 +50,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         cls.parser.feed(cls.html)
 
     def test_required_package_files_exist(self):
-        for rel in ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', 'icons/giglens-icon-180.png', 'icons/giglens-icon-180-v410.png', 'icons/giglens-icon-192-v410.png', 'icons/giglens-icon-512-v410.png', 'icons/giglens-icon-1024-v410.png', 'apple-touch-icon-v410.png', 'favicon-v410.png', 'apple-touch-icon.png', 'favicon.png', '.nojekyll', '404.html', 'CLAUDE_REVIEW_AUDIT.md', 'OCR_LEARNING_AUDIT.md']:
+        for rel in ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', 'icons/giglens-icon-180.png', 'icons/giglens-icon-192.png', 'icons/giglens-icon-512.png', 'icons/giglens-icon-1024.png', 'apple-touch-icon.png', 'favicon.png', '.nojekyll', '404.html', 'CLAUDE_REVIEW_AUDIT.md', 'OCR_LEARNING_AUDIT.md']:
             self.assertTrue((PROJECT_ROOT / rel).is_file(), f'missing {rel}')
 
     def test_html_referenced_local_assets_exist(self):
@@ -82,9 +82,9 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         self.assertIn('./styles.css', cached_assets)
         self.assertIn('./app.js', cached_assets)
         self.assertIn('./manifest.json', cached_assets)
-        self.assertIn('./icons/giglens-icon-192-v410.png', cached_assets)
-        self.assertIn('./icons/giglens-icon-512-v410.png', cached_assets)
-        self.assertIn('CACHE_VERSION = "v39-giglens-learning-ui-repair"', self.service_worker)
+        self.assertIn('./icons/giglens-icon-192.png', cached_assets)
+        self.assertIn('./icons/giglens-icon-512.png', cached_assets)
+        self.assertIn('CACHE_VERSION = "v44-functional-minimalist-ui"', self.service_worker)
         self.assertIn('OFFLINE_FALLBACK = "./index.html"', self.service_worker)
         self.assertIn('networkFirst(request)', self.service_worker)
         self.assertIn('staleWhileRevalidate(request)', self.service_worker)
@@ -258,22 +258,25 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         ]
         for name in expected_functions:
             self.assertRegex(self.app_js, rf'function\s+{name}\s*\(')
-        for metadata_key in ['date', 'merchant', 'restaurant', 'source', 'ocrText', 'ocrConfidence', 'tags', 'deleted', 'createdAt', 'updatedAt', 'version']:
+        for metadata_key in ['date', 'merchant', 'restaurant', 'source', 'ocrText', 'ocrConfidence', 'tags', 'deleted', 'createdAt', 'capturedAt', 'timestampSource', 'timestampConfidence', 'timestampEvidence', 'updatedAt', 'version']:
             self.assertIn(metadata_key, self.app_js)
-        for setting_key in ['gasPrice', 'vehicleMpg', 'maintenanceCostPerMile', 'mileageDeductionRate', 'minimumDollarPerMile', 'minimumDollarPerHour', 'appDataVersion']:
+        for setting_key in ['gasPrice', 'vehicleMpg', 'maintenanceCostPerMile', 'mileageDeductionMode', 'mileageDeductionRate', 'minimumDollarPerMile', 'minimumDollarPerHour', 'appDataVersion']:
             self.assertIn(setting_key, self.app_js)
         for compatibility_key in ['mpg', 'maintenancePerMile', 'taxMileageRate', 'minPerMile', 'minPerHour']:
             self.assertIn(compatibility_key, self.app_js)
         self.assertIn('const ProfitEngine', self.app_js)
         self.assertIn('summarizeRows(rows', self.app_js)
         self.assertIn('vehicleCostPerMile(config = settings)', self.app_js)
+        self.assertIn('mileageDeductionMode: "automatic"', self.app_js)
+        self.assertIn('mileageDeductionRate: 0.76', self.app_js)
+        self.assertIn('76¢/mi · Auto', self.html)
 
 
     def test_phase2_storage_schema_and_migration_hooks_exist(self):
-        self.assertIn('const DATA_VERSION = 13', self.app_js)
-        self.assertIn('const BACKUP_VERSION = 14', self.app_js)
+        self.assertIn('const DATA_VERSION = 16', self.app_js)
+        self.assertIn('const BACKUP_VERSION = 17', self.app_js)
         required_delivery_fields = [
-            'date:', 'merchant,', 'restaurant:', 'note:', 'notes,', 'tags:', 'deleted:', 'ocrText:', 'ocrConfidence:'
+            'date:', 'merchant,', 'restaurant:', 'note:', 'notes,', 'tags:', 'deleted:', 'ocrText:', 'ocrConfidence:', 'capturedAt:', 'timestampSource,', 'timestampConfidence,'
         ]
         for field in required_delivery_fields:
             self.assertIn(field, self.app_js)
@@ -336,7 +339,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         for name in required_functions:
             self.assertRegex(self.app_js, rf'function\s+{name}\s*\(')
         self.assertIn('source: "ocr"', self.app_js)
-        self.assertIn('Tesseract.recognize', self.app_js)
+        self.assertIn('api.recognize', self.app_js)
         self.assertIn('OCR library is not loaded yet', self.app_js)
         self.assertIn('Could not scan this screenshot', self.app_js)
         self.assertIn('low-confidence OCR should not autosave', (PROJECT_ROOT / 'tools/smoke-startup.js').read_text(encoding='utf-8'))
@@ -515,14 +518,15 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         css = (PROJECT_ROOT / 'styles.css').read_text(encoding='utf-8')
         combined = self.html + self.app_js + css
         required_ids = {
-            'mobileActionDock', 'dockQuickAddBtn', 'dockScanBtn', 'dockDecideBtn',
+            'quickAddOpenBtn', 'quickScreenshotInput',
             'todayBreakdownsDetails', 'quickAddHint', 'toast'
         }
         self.assertEqual(sorted(required_ids - self.parser.ids), [])
+        self.assertNotIn('mobileActionDock', self.parser.ids)
         for token in [
-            'skip-link', 'mobile-action-dock', 'dock-action', 'aria-modal="true"',
+            'skip-link', 'aria-modal="true"',
             'aria-atomic="true"', 'prefers-reduced-motion', 'safe-area-inset-bottom',
-            'inputmode="numeric"', 'aria-label="Quick add from a delivery screenshot"',
+            'inputmode="numeric"', 'aria-label="Scan a delivery screenshot and review detected earnings"',
             'Company and zone performance', 'Save a completed order without leaving Today.'
         ]:
             self.assertIn(token, combined)
@@ -534,9 +538,9 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         smoke = (PROJECT_ROOT / 'tools/smoke-startup.js').read_text(encoding='utf-8')
         for token in [
             'phase 13 mobile polish cases passed',
-            'mobile action dock quick add button is not wired',
-            'mobile scan dock action is not represented in data-open-add wiring',
-            'mobile decide dock action is not represented in data-tab-jump wiring'
+            'obsolete floating mobile action dock should not remain',
+            'primary mobile quick add button is not wired',
+            'primary mobile quick add button did not open quick add'
         ]:
             self.assertIn(token, smoke)
 
@@ -550,7 +554,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         for token in [
             'apple-mobile-web-app-capable', 'application-name', 'color-scheme',
             'offline-banner', 'Offline mode is active', 'updateNetworkStatus',
-            'serviceWorker', 'giglens-v39-giglens-learning-ui-repair', 'OFFLINE_FALLBACK',
+            'serviceWorker', 'giglens-v44-functional-minimalist-ui', 'OFFLINE_FALLBACK',
             'cacheCoreAssets', 'deleteOldCaches', 'staleWhileRevalidate',
             'screenshot OCR may need internet', 'OCR library is not loaded yet'
         ]:
@@ -690,39 +694,33 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
 
 
 
-    def test_phase20_netlify_release_package_exists(self):
-        redirects_path = PROJECT_ROOT / '_redirects'
+    def test_github_pages_release_package_exists(self):
         deployment_path = PROJECT_ROOT / 'DEPLOYMENT.md'
-        self.assertTrue(redirects_path.is_file(), 'Netlify _redirects file is missing')
         self.assertTrue(deployment_path.is_file(), 'DEPLOYMENT.md is missing')
-
-        redirects = redirects_path.read_text(encoding='utf-8')
-        self.assertIn('/*', redirects)
-        self.assertIn('/index.html', redirects)
-        self.assertIn('200', redirects)
+        self.assertFalse((PROJECT_ROOT / '_redirects').exists(), 'GitHub-only release should not include Netlify _redirects')
+        self.assertFalse((PROJECT_ROOT / '_headers').exists(), 'GitHub-only release should not include Netlify _headers')
 
         deployment = deployment_path.read_text(encoding='utf-8')
         readme = (PROJECT_ROOT / 'README.md').read_text(encoding='utf-8')
         for token in [
-            'Netlify Drop deployment', 'GitHub Pages deployment', 'iPhone install checklist', 'iPad install checklist',
-            'Offline reload checklist', 'Local data persistence checklist', 'Troubleshooting',
-            'index.html', 'service-worker.js', '_redirects', '.nojekyll', '404.html'
+            'GigLens GitHub Pages Deployment', 'Publish from an iPhone or iPad', 'Install on an iPhone',
+            'Release verification checklist', 'Troubleshooting', 'Settings → Pages',
+            'index.html', 'service-worker.js', '.nojekyll', '404.html'
         ]:
             self.assertIn(token, deployment)
-        self.assertIn('Phase 20 Netlify Release Package', readme)
+        self.assertIn('Deploy to GitHub Pages', readme)
         self.assertIn('DEPLOYMENT.md', readme)
-        self.assertIn('Netlify Drop', readme)
 
-        for rel in ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '_redirects', '.nojekyll', '404.html', 'DEPLOYMENT.md']:
-            self.assertTrue((PROJECT_ROOT / rel).is_file(), f'Netlify release package missing root file {rel}')
+        for rel in ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '.nojekyll', '404.html', 'DEPLOYMENT.md']:
+            self.assertTrue((PROJECT_ROOT / rel).is_file(), f'GitHub Pages release package missing root file {rel}')
 
-        runtime_files = ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '_redirects', '404.html']
+        runtime_files = ['index.html', 'styles.css', 'app.js', 'manifest.json', 'service-worker.js', '404.html']
         runtime_text = '\n'.join((PROJECT_ROOT / rel).read_text(encoding='utf-8') for rel in runtime_files)
         self.assertNotRegex(runtime_text, r'https?://(localhost|127\.0\.0\.1)')
         self.assertNotRegex(runtime_text, r'/(api|backend)/')
 
         smoke = (PROJECT_ROOT / 'tools/smoke-startup.js').read_text(encoding='utf-8')
-        self.assertIn('phase 20 Netlify release package cases passed', smoke)
+        self.assertIn('GitHub Pages release package cases passed', smoke)
 
 
 
@@ -781,7 +779,6 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
             'SECURITY_AUDIT.md',
             'CLAUDE_REVIEW_AUDIT.md',
             'OCR_LEARNING_AUDIT.md',
-            '_redirects',
         ]
         for rel in scanned:
             path = PROJECT_ROOT / rel
@@ -790,6 +787,23 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
             for pattern in secret_patterns:
                 self.assertIsNone(re.search(pattern, text), f'possible exposed secret in {rel}: {pattern}')
 
+
+
+    def test_merchant_type_persistence_and_store_detection_repair(self):
+        for token in [
+            'merchantType,',
+            'function detectKnownStore',
+            'const knownStore = detectKnownStore(cleaned)',
+            'if (knownStore) addMerchantCandidate',
+            'function merchantTypeLabel',
+            'merchantTypeLabel(d.merchantType)',
+            'els.ocrMerchantLabel.textContent = merchantTypeLabel(parsed.merchantType)',
+            '\"merchantType\"',
+        ]:
+            self.assertIn(token, self.app_js)
+        smoke = (PROJECT_ROOT / 'tools' / 'smoke-startup.js').read_text(encoding='utf-8')
+        for token in ['Store merchant detection cases passed', 'Walmart', 'Schnucks', 'Best Buy', 'merchantType']:
+            self.assertIn(token, smoke)
 
     def test_local_ocr_correction_learning_and_mobile_clarity_exist(self):
         for token in [
@@ -808,10 +822,9 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         self.assertIn('<svg viewBox="0 0 180 180"', self.html)
         self.assertNotIn('<img class="brand-mark"', self.html)
         for token in [
-            '.mobile-action-dock { display: none !important;',
             '.bottom-tabs .tab-btn[data-tab="add"] { display: none;',
             'grid-template-columns: repeat(5, minmax(0, 1fr))',
-            'GigLens 4.1.0',
+            'GigLens 4.2',
         ]:
             self.assertIn(token, self.css)
         smoke = (PROJECT_ROOT / 'tools' / 'smoke-startup.js').read_text(encoding='utf-8')
@@ -819,6 +832,28 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
             'runOCRLearningSmoke',
             'local scanner learning did not apply',
             'Reset scanner learning did not clear',
+        ]:
+            self.assertIn(token, smoke)
+
+    def test_v420_detection_tax_timing_and_history_repairs_are_covered(self):
+        combined = self.app_js + self.html + self.css
+        for token in [
+            'OCR_PLATFORM_DISTINCTIVE_TOKENS', 'hasSharedPlatformEvidence',
+            'analyzeScreenshotAccent', 'mergeVisualPlatformEvidence',
+            'STANDARD_MILEAGE_RATES', 'mileageRateForDate', 'mileageDeductionForRows',
+            'taxRateModeInput', 'taxRateHelp', 'normalizeBreaks',
+            'HISTORY_PAGE_DAYS = 30', 'data-history-more', 'content-visibility: auto',
+            'platform-doordash', 'platform-uber-eats', 'platform-grubhub'
+        ]:
+            self.assertIn(token, combined)
+        smoke = (PROJECT_ROOT / 'tools' / 'smoke-startup.js').read_text(encoding='utf-8')
+        for token in [
+            'generic delivery words incorrectly transferred',
+            'conservative screenshot accent detection cases passed',
+            'pausedAt-only imported shift was not repaired',
+            'overlapping imported breaks were double-counted',
+            'date-aware mileage deduction schedule cases passed',
+            'progressive history rendering cases passed'
         ]:
             self.assertIn(token, smoke)
 
@@ -830,23 +865,22 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
             ".quick-add-sheet { position: fixed",
             ".bottom-tabs { position: fixed",
             ".skip-link { position: fixed",
-            ".mobile-action-dock { position: fixed",
         ]
         for token in required_tokens:
             self.assertIn(token, css)
 
-        unsafe_override = ".app-shell,\n.toast,\n.quick-add-sheet,\n.bottom-tabs,\n.mobile-action-dock,\n.skip-link { position: relative"
+        unsafe_override = ".app-shell,\n.toast,\n.quick-add-sheet,\n.bottom-tabs,\n.skip-link { position: relative"
         self.assertNotIn(unsafe_override, css)
 
 
     def test_giglens_home_screen_icons_are_real_pngs(self):
         import struct
         expected = {
-            'apple-touch-icon-v410.png': (180, 180),
-            'icons/giglens-icon-180-v410.png': (180, 180),
-            'icons/giglens-icon-192-v410.png': (192, 192),
-            'icons/giglens-icon-512-v410.png': (512, 512),
-            'icons/giglens-icon-1024-v410.png': (1024, 1024),
+            'apple-touch-icon.png': (180, 180),
+            'icons/giglens-icon-180.png': (180, 180),
+            'icons/giglens-icon-192.png': (192, 192),
+            'icons/giglens-icon-512.png': (512, 512),
+            'icons/giglens-icon-1024.png': (1024, 1024),
         }
         for rel, size in expected.items():
             data = (PROJECT_ROOT / rel).read_bytes()
@@ -855,15 +889,24 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
             self.assertEqual((width, height), size, f'{rel} has wrong dimensions')
             color_type = data[25]
             self.assertEqual(color_type, 2, f'{rel} should be an opaque RGB PNG for iOS')
-        self.assertIn('rel="apple-touch-icon" href="./apple-touch-icon-v410.png"', self.html)
-        self.assertIn('giglens-icon-180-v410.png', self.html)
+        self.assertIn('rel="apple-touch-icon" href="./apple-touch-icon.png"', self.html)
+        self.assertIn('giglens-icon-180.png', self.html)
+        for obsolete in ['apple-touch-icon-v410.png', 'favicon-v410.png', 'icons/giglens-icon-192-v410.png', 'icons/icon-192.png']:
+            self.assertFalse((PROJECT_ROOT / obsolete).exists(), f'obsolete duplicate icon should be removed: {obsolete}')
 
     def test_ocr_worker_has_timeout_progress_and_valid_v5_core_path(self):
         for token in [
             'OCR_INIT_TIMEOUT_MS = 20000',
             'OCR_RECOGNIZE_TIMEOUT_MS = 45000',
+            'OCR_TERMINATE_TIMEOUT_MS = 3000',
+            'OCR_LIBRARY_URL',
+            'sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F',
             'function withTimeout',
             'function formatOCRProgress',
+            'function ensureOCRLibraryLoaded',
+            'function terminateOCRWorker',
+            'quickScanGeneration',
+            'fullScanGeneration',
             'function recognizeScreenshot',
             'tesseract.js-core@v5.0.0',
             'worker.terminate()',
@@ -871,13 +914,55 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         ]:
             self.assertIn(token, self.app_js)
         self.assertNotIn('tesseract.js-core@5.1.1', self.app_js)
+        self.assertNotIn('defer src="https://cdn.jsdelivr.net/npm/tesseract.js', self.html)
         self.assertIn("'wasm-unsafe-eval'", self.html)
-        self.assertIn("'wasm-unsafe-eval'", (PROJECT_ROOT / '_headers').read_text(encoding='utf-8'))
+        self.assertFalse((PROJECT_ROOT / '_headers').exists())
 
-    def test_v3_release_candidate_metadata_and_docs_exist(self):
+    def test_calendar_and_screenshot_timestamp_intelligence_exist(self):
+        for element_id in [
+            'tab-calendar', 'calendarGrid', 'calendarMonthLabel', 'calendarSelectedLabel',
+            'calendarDaySummary', 'calendarDayList', 'calendarPrevBtn', 'calendarNextBtn',
+            'calendarTodayBtn', 'calendarAddBtn', 'deliveryDateInput', 'deliveryTimeInput',
+            'ocrDateInput', 'ocrTimeInput', 'ocrTimestamp', 'quickDateInput', 'quickTimeInput'
+        ]:
+            self.assertIn(element_id, self.parser.ids)
+        for function_name in [
+            'detectScreenshotTimestamp', 'combineLocalDateTime', 'renderCalendar',
+            'renderSelectedCalendarDay', 'estimateScreenshotWork', 'workSummaryForDay',
+            'shiftMillisecondsForDay', 'addDeliveryToCalendarDay', 'showSavedDeliveryDay'
+        ]:
+            self.assertRegex(self.app_js, rf'function\s+{function_name}\s*\(')
+        for token in [
+            'timestampSource', 'timestampConfidence', 'timestampEvidence', 'capturedAt',
+            '75-minute', 'calendar-day-summary', 'data-calendar-day',
+            'user corrected screenshot date/time'
+        ]:
+            self.assertIn(token, self.app_js + self.html + self.css)
+        self.assertTrue((PROJECT_ROOT / 'CALENDAR_TIMESTAMP_AUDIT.md').is_file())
+        self.assertIn('Calendar and Screenshot Timestamp Audit', (PROJECT_ROOT / 'CALENDAR_TIMESTAMP_AUDIT.md').read_text(encoding='utf-8'))
+
+
+    def test_v440_functional_minimalist_ui_redesign_exists(self):
+        combined = self.html + self.css
+        for token in [
+            'class="tab-icon"',
+            'data-tab-jump="analytics"',
+            'grid-template-columns: repeat(5, minmax(0, 1fr))',
+            '.bottom-tabs .tab-btn[data-tab="analytics"] { display: none;',
+            'linear-gradient(135deg, var(--accent-purple), var(--accent-magenta))',
+            'Functional state utilities retained',
+            'UI_REDESIGN_AUDIT.md',
+        ]:
+            if token.endswith('.md'):
+                self.assertTrue((PROJECT_ROOT / token).is_file())
+            else:
+                self.assertIn(token, combined)
+        self.assertNotIn('mobile-action-dock', self.html)
+
+    def test_current_release_metadata_and_docs_exist(self):
         package = json.loads((PROJECT_ROOT / 'package.json').read_text(encoding='utf-8'))
-        self.assertEqual(package.get('version'), '4.1.0')
-        self.assertIn('v39-giglens-learning-ui-repair', self.service_worker)
+        self.assertEqual(package.get('version'), '4.4.0')
+        self.assertIn('v44-functional-minimalist-ui', self.service_worker)
         self.assertIn('Designed by Tech Phactory Solutions', self.html)
         self.assertIn('app-credit', self.html)
         self.assertIn('maker-line', self.html)
@@ -889,7 +974,7 @@ class DriveLedgerStaticAppTests(unittest.TestCase):
         for token in ['v3 Release Candidate', 'Manual QA checklist', 'Known limitations', 'GitHub Pages']:
             self.assertIn(token, readme)
         self.assertIn('Final Release Audit', audit)
-        self.assertIn('4.1.0', changelog)
+        self.assertIn('4.4.0', changelog)
 
 
     def test_luxury_refinement_and_restaurant_ocr_exist(self):
