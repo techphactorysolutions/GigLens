@@ -77,7 +77,7 @@ iOS caches Home Screen artwork aggressively. If an older shortcut still shows th
 
 ### The app shows an old version
 
-Wait for the current Pages deployment to finish, reload the Safari page, and close/reopen the Home Screen app. GigLens 4.3.0 uses the `giglens-v43-giglens-calendar-timestamps` service-worker cache and deletes older GigLens/DriveLedger caches during activation.
+Wait for the current Pages deployment to finish. When GigLens shows “An update is ready,” save or export any draft, close other GigLens windows, and tap Update app. Version 4.6.0 keeps one coherent cached release until activation and isolates new cache names by hosting scope. Old unscoped caches are left untouched to avoid deleting another Pages app's data.
 
 ### Screenshot OCR cannot load
 
@@ -98,3 +98,11 @@ npm test
 
 ## 4.4.0 cache note
 After publishing the full release, reload once online so `giglens-v44-functional-minimalist-ui` replaces the older cached shell.
+
+## 4.6.0 deployment and rollback
+
+Publish the entire repository tree, including `icons/`, together. Do not flatten the release. Run the syntax, test, and Safari regression commands before deployment. Open the deployed app online once so installation can finish, then test an offline reload. OCR remains network-dependent; manual entry, history, analytics, JSON backup and CSV export are the supported offline flows.
+
+Close old GigLens tabs before the first save in 4.6.0. The new `giglens.state.v2` envelope becomes authoritative; legacy GigLens/DriveLedger keys remain unchanged as recovery sources. Downgrading to 4.5 does not read new envelope saves. Export JSON from 4.6 before any downgrade and restore it through the older app's validated import flow if compatible. Do not clear website data to apply an update.
+
+See `SAFARI_REPAIR_NOTES.md` for exact verification evidence and outstanding physical-device checks.

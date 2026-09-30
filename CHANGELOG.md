@@ -1,3 +1,13 @@
+## 4.6.0 — Safari reliability
+
+- Commit all stores and recovery snapshots atomically; preserve drafts on quota/blocked storage errors and preserve corrupt raw data.
+- Serialize saves with Web Locks; reread shared state before writing and reject stale delivery edits.
+- Serialize/cancel OCR workers, bound image decoding, preserve edits during scans, reset upload inputs for same-file retries, and gate saves while scanning.
+- Report share cancellation accurately and keep a fresh-gesture download fallback; improve CSV encoding and timestamps.
+- Repair safe areas, input zoom, keyboard sheets, dialog focus, touch targets, and CSP chart widths.
+- Restore the icon/test/tool directory layout, use a coherent offline shell, and gate updates while other windows or drafts exist.
+- Add executable Safari failure regressions and browser smoke coverage.
+
 ## 4.5.0 — Calendar monthly analytics
 
 - Added a full monthly analysis section to the bottom of the Calendar tab.

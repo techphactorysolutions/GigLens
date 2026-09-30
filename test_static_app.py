@@ -84,10 +84,10 @@ class GigLensStaticAppTests(unittest.TestCase):
         self.assertIn('./manifest.json', cached_assets)
         self.assertIn('./icons/giglens-icon-192.png', cached_assets)
         self.assertIn('./icons/giglens-icon-512.png', cached_assets)
-        self.assertIn('CACHE_VERSION = "v45-calendar-month-analytics"', self.service_worker)
+        self.assertIn('CACHE_VERSION = "v46-safari-reliability"', self.service_worker)
         self.assertIn('OFFLINE_FALLBACK = "./index.html"', self.service_worker)
-        self.assertIn('networkFirst(request)', self.service_worker)
-        self.assertIn('staleWhileRevalidate(request)', self.service_worker)
+        self.assertIn('releaseAsset(request, navigation)', self.service_worker)
+        self.assertIn('coreURLs.has(url.href)', self.service_worker)
         self.assertIn('Tesseract CDN', self.service_worker)
         for rel in cached_assets:
             if rel == './':
@@ -152,7 +152,7 @@ class GigLensStaticAppTests(unittest.TestCase):
         ]
         for element_id in expected_bindings:
             self.assertIn(element_id, self.parser.ids)
-            self.assertRegex(self.app_js, rf'(\$\("{element_id}"\)|els\.{element_id})\.addEventListener')
+            self.assertRegex(self.app_js, rf'(\$\("{element_id}"\)|els\.{element_id})(?:\?\.)?\.?addEventListener')
         self.assertIn('scanScreenshot', self.app_js)
         self.assertIn('evaluateOffer', self.app_js)
         self.assertIn('exportBackup', self.app_js)
@@ -174,7 +174,7 @@ class GigLensStaticAppTests(unittest.TestCase):
                 continue
             self.assertRegex(
                 self.app_js,
-                rf'(\$\("{button_id}"\)|els\.{button_id})\.addEventListener',
+                rf'(\$\("{button_id}"\)|els\.{button_id})(?:\?\.)?\.?addEventListener',
                 f'button #{button_id} appears visible but has no direct/delegated listener'
             )
 
@@ -287,7 +287,7 @@ class GigLensStaticAppTests(unittest.TestCase):
         self.assertIn('raw.maintenanceCostPerMile ?? raw.maintenancePerMile', self.app_js)
         self.assertIn('raw.mileageDeductionRate ?? raw.taxMileageRate', self.app_js)
         self.assertIn('raw.minimumDollarPerMile ?? raw.minPerMile', self.app_js)
-        self.assertIn('persistNormalizedState();', self.app_js)
+        self.assertIn('persistNormalizedState()', self.app_js)
         self.assertIn('schema:', self.app_js)
 
     def test_phase3_command_center_surfaces_are_present(self):
@@ -300,7 +300,7 @@ class GigLensStaticAppTests(unittest.TestCase):
             self.assertIn(label, self.html)
         for token in ['status-good', 'status-warning', 'status-danger', 'status-neutral']:
             self.assertIn(token, self.app_js + self.html + (PROJECT_ROOT / 'styles.css').read_text(encoding='utf-8'))
-        self.assertIn('if (els.heroShiftBtn) els.heroShiftBtn.addEventListener("click", toggleShift);', self.app_js)
+        self.assertIn('if (els.heroShiftBtn) els.heroShiftBtn.addEventListener("click", mutate(toggleShift));', self.app_js)
         self.assertIn('grossPerMile', self.app_js)
 
     def test_phase4_quick_add_bottom_sheet_surfaces_are_present(self):
@@ -318,7 +318,7 @@ class GigLensStaticAppTests(unittest.TestCase):
         self.assertIn('quickDefaultCompany', self.app_js)
         self.assertIn('quickDefaultZone', self.app_js)
         self.assertIn('document.querySelectorAll("[data-quick-add-open]")', self.app_js)
-        self.assertIn('els.quickAddForm.addEventListener("submit", saveQuickDelivery)', self.app_js)
+        self.assertIn('els.quickAddForm.addEventListener("submit", mutate(saveQuickDelivery))', self.app_js)
         self.assertIn('els.quickSaveAnotherBtn.addEventListener("click"', self.app_js)
 
 
@@ -554,9 +554,9 @@ class GigLensStaticAppTests(unittest.TestCase):
         for token in [
             'apple-mobile-web-app-capable', 'application-name', 'color-scheme',
             'offline-banner', 'Offline mode is active', 'updateNetworkStatus',
-            'serviceWorker', 'giglens-v45-calendar-month-analytics', 'OFFLINE_FALLBACK',
-            'cacheCoreAssets', 'deleteOldCaches', 'staleWhileRevalidate',
-            'screenshot OCR may need internet', 'OCR library is not loaded yet'
+            'serviceWorker', 'v46-safari-reliability', 'OFFLINE_FALLBACK',
+            'cacheCoreAssets', 'deleteOldCaches', 'releaseAsset',
+            'screenshot OCR requires internet', 'OCR library is not loaded yet'
         ]:
             self.assertIn(token, combined)
         for icon in manifest.get('icons', []):
@@ -686,7 +686,7 @@ class GigLensStaticAppTests(unittest.TestCase):
         smoke = (PROJECT_ROOT / 'tools/smoke-startup.js').read_text(encoding='utf-8')
         for token in [
             'phase 19 privacy and data control cases passed',
-            'Export All Data should save a last-backup snapshot and download JSON',
+            'Export All Data should download JSON without consuming additional local storage',
             'Reset Deliveries Only should clear deliveries, keep settings, and store an emergency backup',
             'dangerous privacy actions should require the second typed confirmation'
         ]:
@@ -904,12 +904,12 @@ class GigLensStaticAppTests(unittest.TestCase):
             'function withTimeout',
             'function formatOCRProgress',
             'function ensureOCRLibraryLoaded',
-            'function terminateOCRWorker',
+            'function cancelScan',
             'quickScanGeneration',
             'fullScanGeneration',
             'function recognizeScreenshot',
             'tesseract.js-core@v5.0.0',
-            'worker.terminate()',
+            'job.worker.terminate()',
             'Could not scan this screenshot.',
         ]:
             self.assertIn(token, self.app_js)
@@ -992,8 +992,8 @@ class GigLensStaticAppTests(unittest.TestCase):
 
     def test_current_release_metadata_and_docs_exist(self):
         package = json.loads((PROJECT_ROOT / 'package.json').read_text(encoding='utf-8'))
-        self.assertEqual(package.get('version'), '4.5.0')
-        self.assertIn('v45-calendar-month-analytics', self.service_worker)
+        self.assertEqual(package.get('version'), '4.6.0')
+        self.assertIn('v46-safari-reliability', self.service_worker)
         self.assertIn('Designed by Tech Phactory Solutions', self.html)
         self.assertIn('app-credit', self.html)
         self.assertIn('maker-line', self.html)
@@ -1032,7 +1032,7 @@ class GigLensStaticAppTests(unittest.TestCase):
     def test_3_6_2_screenshot_first_quick_add_exists(self):
         combined = self.html + self.app_js + (PROJECT_ROOT / 'styles.css').read_text(encoding='utf-8')
         for token in [
-            'Scan order screenshot', 'Fastest path: upload the screenshot',
+            'Scan order screenshot', 'Choose screenshot',
             'Review detected details or type manually', 'scanQuickScreenshot',
             'quickOCRText', 'source: quickOCRText ? "ocr" : "manual"'
         ]:

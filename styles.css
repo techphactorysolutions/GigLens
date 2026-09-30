@@ -921,7 +921,7 @@ input.invalid, select.invalid { border-color: var(--danger); }
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent));
 }
 .calendar-month-breakdowns {
   border-top: 1px solid rgba(255,255,255,.08);
@@ -973,4 +973,23 @@ input.invalid, select.invalid { border-color: var(--danger); }
   .calendar-month-leaders,
   .calendar-month-breakdown-grid { grid-template-columns: 1fr; }
   .calendar-daily-row { grid-template-columns: 56px minmax(70px, 1fr) 74px; }
+}
+
+/* Safari 4.6: keyboard, safe areas, accessible controls, readable narrow calendars. */
+input, select, textarea { font-size: 16px; min-width: 0; }
+.app-shell { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+.quick-add-sheet { bottom: auto; height: 100vh; height: 100dvh; padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+.sheet-panel { max-height: 100%; overscroll-behavior: contain; scroll-padding-block: 20px 130px; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+.bottom-tabs { width: min(730px, calc(100% - max(14px, env(safe-area-inset-left)) - max(14px, env(safe-area-inset-right)))); }
+.toast button { min-height: 44px; min-width: 44px; }
+.file-drop button { min-height: 48px; }
+#exportDownloadPanel a { display: inline-flex; align-items: center; min-height: 48px; text-decoration: none; }
+#storageBanner { border-color: var(--danger); }
+:focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 3px; }
+@media (max-width: 500px) {
+  .calendar-day-earnings { display: none; }
+  .calendar-grid, .calendar-weekdays { gap: 2px; }
+  .calendar-grid button { min-height: 48px; padding: 6px 2px; align-items: center; }
+  .quick-add-sheet { padding-top: 0; padding-bottom: 0; }
+  .sheet-panel { max-height: 100%; }
 }

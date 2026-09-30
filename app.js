@@ -32,19 +32,50 @@
     { start: "2024-01-01", end: "2024-12-31", rate: 0.67 }
   ]);
 
-  function migrateLegacyStorage() {
-    for (const [nextKey, legacyKey] of Object.entries(LEGACY_KEYS)) {
-      try {
-        if (localStorage.getItem(nextKey) == null && localStorage.getItem(legacyKey) != null) {
-          localStorage.setItem(nextKey, localStorage.getItem(legacyKey));
-        }
-      } catch (error) {
-        console.warn("GigLens storage migration skipped", error);
+  const STATE_KEY = "giglens.state.v2";
+  const STATE_LOCK = "giglens-ledger-write";
+  const STATE_SCHEMA = 1;
+  let storageProblem = "";
+  let mutationActive = false;
+  let recoveryChanges = {};
+  let canonical = readCanonicalSafely();
+
+  function readCanonical() {
+    const raw = localStorage.getItem(STATE_KEY);
+    let values = {};
+    let revision = 0;
+    if (raw !== null) {
+      const data = JSON.parse(raw);
+      if (!data || data.schema !== STATE_SCHEMA || !Number.isSafeInteger(data.revision)
+          || data.revision < 0 || !data.values || typeof data.values !== "object" || Array.isArray(data.values)) {
+        throw new Error("Saved data needs recovery. Its original contents have been preserved.");
+      }
+      values = data.values;
+      revision = data.revision;
+    } else {
+      for (const key of [STORE_KEY, DECISIONS_KEY, SETTINGS_KEY, SHIFT_KEY, OCR_LEARNING_KEY, ROLLBACK_KEY, LAST_BACKUP_KEY]) {
+        const text = localStorage.getItem(key) ?? (LEGACY_KEYS[key] ? localStorage.getItem(LEGACY_KEYS[key]) : null);
+        if (text !== null) values[key] = JSON.parse(text);
       }
     }
+    for (const key of [STORE_KEY, DECISIONS_KEY]) {
+      if (key in values && !Array.isArray(values[key])) throw new Error("Saved ledger needs recovery. No data was replaced.");
+    }
+    for (const key of [SETTINGS_KEY, SHIFT_KEY, OCR_LEARNING_KEY, ROLLBACK_KEY, LAST_BACKUP_KEY]) {
+      if (values[key] != null && (typeof values[key] !== "object" || Array.isArray(values[key]))) {
+        throw new Error("Saved settings or recovery data is damaged. No data was replaced.");
+      }
+    }
+    return { raw, revision, values };
   }
 
-  migrateLegacyStorage();
+  function readCanonicalSafely() {
+    try { return readCanonical(); }
+    catch (error) {
+      storageProblem = "Saved data could not be read. Export recovery data before repairing browser storage. Nothing has been overwritten.";
+      return { raw: null, revision: 0, values: {} };
+    }
+  }
 
   const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
   const $ = (id) => document.getElementById(id);
@@ -118,6 +149,14 @@
   let ocrLibraryPromise = null;
   let quickScanGeneration = 0;
   let fullScanGeneration = 0;
+  let quickAddOpener = null;
+  let exportObjectURL = null;
+  let formDirty = false;
+  let waitingWorker = null;
+  let activeScan = null;
+  let scanQueue = Promise.resolve();
+  let workerBarrier = Promise.resolve();
+  let editedDeliveryVersion = null;
   let historyDayLimit = HISTORY_PAGE_DAYS;
   let calendarCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   let selectedCalendarDay = todayKey();
@@ -358,28 +397,103 @@
   };
 
   function readJSON(key, fallback) {
+    const value = canonical.values[key];
+    return value === undefined ? fallback : JSON.parse(JSON.stringify(value));
+  }
+
+  function restoreCanonicalModel() {
+    deliveries = normalizeDeliveries(readJSON(STORE_KEY, []));
+    decisions = normalizeDecisions(readJSON(DECISIONS_KEY, []));
+    settings = normalizeSettings(readJSON(SETTINGS_KEY, {}));
+    shift = normalizeShift(readJSON(SHIFT_KEY, {}));
+    ocrLearning = normalizeOCRLearning(readJSON(OCR_LEARNING_KEY, null));
+  }
+
+  function showStorageProblem(message) {
+    storageProblem = message;
+    const banner = $("storageBanner");
+    if (banner) { banner.textContent = message; banner.classList.remove("hidden"); }
+    toast(message);
+  }
+
+  function persistNormalizedState(extra = {}) {
     try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
-    } catch {
-      return fallback;
+      if (!mutationActive) throw new Error("Saving is unavailable here. Use a current Safari browser over HTTPS.");
+      if (localStorage.getItem(STATE_KEY) !== canonical.raw) throw new Error("Data changed in another window. Your draft is intact; retry the save.");
+      const values = { ...canonical.values, [STORE_KEY]: deliveries, [DECISIONS_KEY]: decisions,
+        [SETTINGS_KEY]: settings, [SHIFT_KEY]: shift, [OCR_LEARNING_KEY]: ocrLearning,
+        ...recoveryChanges, ...extra };
+      const raw = JSON.stringify({ schema: STATE_SCHEMA, revision: canonical.revision + 1, values });
+      // One atomic replacement includes all ledger stores and any recovery snapshot.
+      localStorage.setItem(STATE_KEY, raw);
+      canonical = { raw, revision: canonical.revision + 1, values: JSON.parse(raw).values };
+      recoveryChanges = {};
+      storageProblem = "";
+      $("storageBanner")?.classList.add("hidden");
+      return true;
+    } catch (error) {
+      recoveryChanges = {};
+      restoreCanonicalModel();
+      showStorageProblem(error?.name === "QuotaExceededError"
+        ? "Not saved: storage is full. Your draft is intact. Export a backup and free space before retrying."
+        : (error?.message || "Not saved. Your draft is intact; browser storage may be blocked."));
+      return false;
     }
   }
 
   function writeJSON(key, value) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-      toast("Could not save. Device storage may be full or blocked.");
-    }
+    return persistNormalizedState({ [key]: value });
   }
 
-  function persistNormalizedState() {
-    writeJSON(STORE_KEY, deliveries);
-    writeJSON(DECISIONS_KEY, decisions);
-    writeJSON(SETTINGS_KEY, settings);
-    writeJSON(SHIFT_KEY, shift);
-    writeJSON(OCR_LEARNING_KEY, ocrLearning);
+  function mutate(handler) {
+    return (...args) => {
+      args[0]?.preventDefault?.();
+      if (mutationActive) return handler(...args);
+      if (!navigator.locks?.request) {
+        showStorageProblem("Viewing only: safe saving requires a current Safari browser over HTTPS. You can still export data.");
+        return;
+      }
+      const execute = () => {
+        try {
+          canonical = readCanonical();
+          restoreCanonicalModel();
+          if (deliveries.length !== (canonical.values[STORE_KEY] || []).length
+              || decisions.length !== (canonical.values[DECISIONS_KEY] || []).length) {
+            throw new Error("Some saved records need recovery. Export recovery data; no records were replaced.");
+          }
+          mutationActive = true;
+          recoveryChanges = {};
+          return handler(...args);
+        } catch (error) {
+          restoreCanonicalModel();
+          showStorageProblem(error?.message || "Not saved. Browser storage could not be read.");
+        } finally { mutationActive = false; recoveryChanges = {}; }
+      };
+      return navigator.locks.request(STATE_LOCK, { mode: "exclusive" }, execute)
+        .catch((error) => showStorageProblem(error?.message || "Could not acquire the save lock. Please retry."));
+    };
+  }
+
+  function refreshStoredState() {
+    if (mutationActive) return;
+    try {
+      const latest = readCanonical();
+      if (latest.raw === canonical.raw) return;
+      canonical = latest;
+      restoreCanonicalModel();
+      // Data views refresh without replacing editable form values.
+      renderHistory(); renderCalendar(); renderLive(); renderAnalytics(); renderDecisionLog(); renderPrivacyCenter(); updateChartWidths();
+    } catch { showStorageProblem("Saved data could not be refreshed. Your draft has been kept."); }
+  }
+
+  function exportRecoveryData() {
+    const raw = {};
+    try {
+      for (const key of [STATE_KEY, STORE_KEY, DECISIONS_KEY, SETTINGS_KEY, SHIFT_KEY, OCR_LEARNING_KEY,
+        ROLLBACK_KEY, LAST_BACKUP_KEY, ...Object.values(LEGACY_KEYS)]) raw[key] = localStorage.getItem(key);
+    } catch { return toast("This browser is blocking access to saved data. Enable storage, then retry recovery export."); }
+    return shareOrDownload(JSON.stringify({ app: "GigLens raw recovery", exportedAt: new Date().toISOString(), raw }, null, 2),
+      `giglens-recovery-${todayKey()}.json`, "application/json");
   }
 
   function normalizeComparableText(value) {
@@ -510,7 +624,7 @@
     return fields;
   }
 
-  function recordOCRCorrection(parsed, reviewed, rawText, source = "review") {
+  function recordOCRCorrection(parsed, reviewed, rawText, source = "review", persist = true) {
     if (!parsed || !reviewed || !String(rawText || "").trim()) return { saved: false, changedFields: [] };
     const original = normalizeCorrectionSide({
       platform: parsed.platform || "Other",
@@ -551,8 +665,8 @@
     if (previousIndex >= 0) ocrLearning.corrections.splice(previousIndex, 1);
     ocrLearning.corrections.push(correction);
     ocrLearning.corrections = ocrLearning.corrections.slice(-OCR_LEARNING_LIMIT);
-    writeJSON(OCR_LEARNING_KEY, ocrLearning);
-    renderOCRLearningStatus();
+    if (persist && !writeJSON(OCR_LEARNING_KEY, ocrLearning)) return { saved: false, changedFields };
+    if (persist) renderOCRLearningStatus();
     return { saved: true, changedFields };
   }
 
@@ -655,7 +769,7 @@
     if (!ocrLearning.corrections.length) return toast("Scanner learning is already empty.");
     if (!confirm("Reset all locally learned screenshot corrections? Saved deliveries will not be affected.")) return;
     ocrLearning = normalizeOCRLearning(null);
-    writeJSON(OCR_LEARNING_KEY, ocrLearning);
+    if (!writeJSON(OCR_LEARNING_KEY, ocrLearning)) return;
     renderOCRLearningStatus();
     toast("Scanner learning reset. Saved deliveries were kept.");
   }
@@ -1467,6 +1581,13 @@
     });
   }
 
+  function updateChartWidths() {
+    document.querySelectorAll("[data-bar-width]").forEach((bar) => {
+      const width = Number(bar.dataset.barWidth);
+      bar.style.width = `${Number.isFinite(width) ? Math.max(0, Math.min(100, width)) : 0}%`;
+    });
+  }
+
   function render() {
     const todays = todayDeliveries();
     const c = calculate(todays);
@@ -2007,7 +2128,7 @@
             <div><strong>${escapeHTML(group.name)}</strong><span>${group.count} ${group.count === 1 ? "delivery" : "deliveries"} · ${group.miles.toFixed(1)} mi</span></div>
             <strong>${escapeHTML(titleMetric)}</strong>
           </div>
-          <div class="analytics-bar" aria-hidden="true"><span style="width:${width.toFixed(1)}%"></span></div>
+          <div class="analytics-bar" aria-hidden="true"><span data-bar-width="${width.toFixed(1)}"></span></div>
           <div class="analytics-metrics">
             <span><strong>${money.format(group.earnings)}</strong><small>earnings</small></span>
             <span><strong>${money.format(group.profit)}</strong><small>profit</small></span>
@@ -2172,7 +2293,7 @@
             <div><strong>${escapeHTML(group.name)}</strong><span>${group.count} ${group.count === 1 ? "delivery" : "deliveries"}${group.days ? ` · ${group.days} ${group.days === 1 ? "day" : "days"}` : ""}</span></div>
             <strong>${money.format(group.avgProfitHour)}/hr profit</strong>
           </div>
-          <div class="analytics-bar" aria-hidden="true"><span style="width:${width.toFixed(1)}%"></span></div>
+          <div class="analytics-bar" aria-hidden="true"><span data-bar-width="${width.toFixed(1)}"></span></div>
           <div class="analytics-metrics">
             <span><strong>${money.format(group.avgGrossHour)}</strong><small>avg gross/hr</small></span>
             <span><strong>${money.format(group.avgProfitHour)}</strong><small>avg profit/hr</small></span>
@@ -2351,7 +2472,7 @@
     const model = buildSmartGoalModel();
     if (!model.canSuggest) return toast("Save more past driving days before applying a smart goal.");
     settings = normalizeSettings({ ...settings, dailyGoal: model.suggestedGoal });
-    writeJSON(SETTINGS_KEY, settings);
+    if (!writeJSON(SETTINGS_KEY, settings)) return;
     render();
     toast(`Daily goal updated to ${money.format(model.suggestedGoal)}.`);
   }
@@ -2518,7 +2639,7 @@
             <strong>${escapeHTML(group.name)}</strong>
             <span>${money.format(group.earnings)}</span>
           </div>
-          <div class="calendar-month-bar"><span style="width:${width.toFixed(1)}%"></span></div>
+          <div class="calendar-month-bar"><span data-bar-width="${width.toFixed(1)}"></span></div>
           <small>${group.count} ${group.count === 1 ? "order" : "orders"} · ${money.format(group.avgProfitPerMile)}/mi profit · ${money.format(group.avgProfitHour)}/hr profit</small>
         </article>`;
     }).join("");
@@ -2612,11 +2733,11 @@
     els.calendarMonthDailyChart.className = "calendar-month-daily-chart";
     els.calendarMonthDailyChart.innerHTML = daily.map((day) => {
       const date = dateFromDayKey(day.key);
-      const width = Math.max(3, Math.min(100, (Number(day.earnings || 0) / maxDaily) * 100));
+      const width = Math.max(0, Math.min(100, (Number(day.earnings || 0) / maxDaily) * 100));
       return `
         <article class="calendar-daily-row">
           <span>${date.toLocaleDateString([], { month: "short", day: "numeric" })}</span>
-          <div class="calendar-month-bar"><span style="width:${width.toFixed(1)}%"></span></div>
+          <div class="calendar-month-bar"><span data-bar-width="${width.toFixed(1)}"></span></div>
           <strong>${money.format(day.earnings)}</strong>
         </article>`;
     }).join("");
@@ -2652,6 +2773,7 @@
     els.calendarGrid.innerHTML = cells.join("");
     renderSelectedCalendarDay();
     renderCalendarMonthAnalytics();
+    updateChartWidths();
   }
 
   function renderSelectedCalendarDay() {
@@ -2716,6 +2838,7 @@
     const selected = dateFromDayKey(selectedCalendarDay);
     const now = new Date();
     els.editDeliveryId.value = "";
+    editedDeliveryVersion = null;
     els.companyInput.value = settings.defaultCompany || "DoorDash";
     els.zoneInput.value = settings.defaultZone || "";
     els.deliveryDateInput.value = localDateInputValue(selected);
@@ -2882,7 +3005,7 @@
       return;
     }
     settings = normalizeSettings({ ...settings, customZones: [...zones, zone], defaultZone: settings.defaultZone || zone });
-    writeJSON(SETTINGS_KEY, settings);
+    if (!writeJSON(SETTINGS_KEY, settings)) return;
     els.customZoneInput.value = "";
     render();
     toast(`Added ${zone} to custom zones.`);
@@ -2921,9 +3044,8 @@
         if (zoneKey(delivery.zone) !== zoneKey(oldName)) return delivery;
         return normalizeDelivery({ ...delivery, zone: nextName, updatedAt: new Date().toISOString() }) || delivery;
       });
-      writeJSON(STORE_KEY, deliveries);
     }
-    writeJSON(SETTINGS_KEY, settings);
+    if (!persistNormalizedState()) return;
     render();
     toast(shouldUpdateDeliveries ? `Renamed ${oldName} and updated matching deliveries.` : `Renamed custom zone to ${nextName}.`);
   }
@@ -2938,7 +3060,7 @@
       defaultZone: zoneKey(settings.defaultZone) === zoneKey(name) ? "" : settings.defaultZone,
       customZones: zones
     });
-    writeJSON(SETTINGS_KEY, settings);
+    if (!writeJSON(SETTINGS_KEY, settings)) return;
     render();
     toast(`${name} removed from custom zones. Saved deliveries were not deleted.`);
   }
@@ -3068,7 +3190,7 @@
   }
 
   function driveLedgerStorageKeys() {
-    const known = [STORE_KEY, DECISIONS_KEY, SETTINGS_KEY, SHIFT_KEY, ROLLBACK_KEY, LAST_BACKUP_KEY, OCR_LEARNING_KEY];
+    const known = [STATE_KEY, STORE_KEY, DECISIONS_KEY, SETTINGS_KEY, SHIFT_KEY, ROLLBACK_KEY, LAST_BACKUP_KEY, OCR_LEARNING_KEY];
     const found = new Set(known);
     try {
       if (typeof localStorage.length === "number" && typeof localStorage.key === "function") {
@@ -3085,8 +3207,10 @@
 
   function storageUsageEstimate() {
     const rows = driveLedgerStorageKeys().map((key) => {
-      const raw = localStorage.getItem(key) || "";
-      return { key, bytes: raw.length * 2, present: raw.length > 0 };
+      try {
+        const raw = localStorage.getItem(key) || "";
+        return { key, bytes: raw.length * 2, present: raw.length > 0 };
+      } catch { return { key, bytes: 0, present: false }; }
     });
     const totalBytes = rows.reduce((sum, row) => sum + row.bytes, 0);
     return { rows, totalBytes };
@@ -3385,6 +3509,7 @@
     document.querySelectorAll(".tab-btn").forEach((el) => el.classList.remove("active"));
     screen.classList.add("active");
     button.classList.add("active");
+    window.scrollTo?.(0, 0);
   }
 
   function openAdd(mode = "manual") {
@@ -3397,9 +3522,7 @@
       if (els.deliveryTimeInput) els.deliveryTimeInput.value = localTimeInputValue(now);
     }
     if (mode === "scan") {
-      setTimeout(() => {
-        if (els.screenshotInput && typeof els.screenshotInput.click === "function") els.screenshotInput.click();
-      }, 80);
+      els.screenshotInput?.click();
     } else if (els.earningsInput && typeof els.earningsInput.focus === "function") {
       els.earningsInput.focus();
     }
@@ -3444,21 +3567,32 @@
     renderQuickAddPreview();
   }
 
-  function openQuickAdd() {
+  function updateSheetViewport() {
+    const viewport = window.visualViewport;
+    if (!viewport || !els.quickAddSheet) return;
+    els.quickAddSheet.style.top = `${viewport.offsetTop}px`;
+    els.quickAddSheet.style.height = `${viewport.height}px`;
+  }
+
+  function openQuickAdd(event) {
+    quickAddOpener = event?.currentTarget || document.activeElement;
     setQuickAddDefaults(true);
     els.quickAddSheet.classList.remove("hidden");
     els.quickAddSheet.setAttribute("aria-hidden", "false");
     document.body.classList.add("sheet-open");
-    setTimeout(() => {
-      if (els.quickScreenshotInput && typeof els.quickScreenshotInput.focus === "function") els.quickScreenshotInput.focus();
-    }, 40);
+    document.querySelectorAll(".app-shell > :not(#quickAddSheet)").forEach((node) => { node.inert = true; });
+    updateSheetViewport();
+    $("quickUploadBtn")?.focus();
   }
 
   function closeQuickAdd() {
-    quickScanGeneration += 1;
+    cancelScan("quick");
+    clearQuickScan(true);
     els.quickAddSheet.classList.add("hidden");
     els.quickAddSheet.setAttribute("aria-hidden", "true");
     document.body.classList.remove("sheet-open");
+    document.querySelectorAll(".app-shell > :not(#quickAddSheet)").forEach((node) => { node.inert = false; });
+    quickAddOpener?.focus?.();
   }
 
   function renderQuickAddPreview() {
@@ -3511,6 +3645,7 @@
     els.quickScanStatus.classList.remove("hidden", "loading", "success", "failed");
     els.quickScanStatus.classList.add(state);
     els.quickScanStatus.textContent = message;
+    if (state === "loading" || state === "failed") els.quickClearScanBtn?.classList.remove("hidden");
   }
 
   function populateQuickFromOCR(parsed) {
@@ -3539,6 +3674,7 @@
   }
 
   function clearQuickScan(clearFile = true) {
+    cancelScan("quick");
     quickScanGeneration += 1;
     quickOCRText = "";
     quickOCRParsed = null;
@@ -3583,7 +3719,7 @@
 
   function validateScreenshotFile(file) {
     if (!file || typeof file !== "object") return "Choose an image screenshot first.";
-    if (file.type && !String(file.type).toLowerCase().startsWith("image/")) return "Choose a browser-supported image such as PNG or JPEG.";
+    if (file.type && !["image/png", "image/jpeg"].includes(String(file.type).toLowerCase())) return "Choose a browser-supported image such as PNG or JPEG.";
     if (Number(file.size) > MAX_SCREENSHOT_BYTES) return "This image is over 20 MB. Crop it or choose a smaller screenshot.";
     return "";
   }
@@ -3600,7 +3736,10 @@
     if (typeof globalThis.createImageBitmap !== "function" || !document?.createElement) return null;
     let bitmap = null;
     try {
-      bitmap = await globalThis.createImageBitmap(file);
+      let abandoned = false;
+      const decoding = globalThis.createImageBitmap(file).then((value) => { if (abandoned) value.close(); return value; });
+      try { bitmap = await withTimeout(decoding, 3000, "Color analysis timed out."); }
+      catch (error) { abandoned = true; throw error; }
       if (!bitmap?.width || !bitmap?.height) return null;
       const canvas = document.createElement("canvas");
       const context = typeof canvas.getContext === "function" ? canvas.getContext("2d", { willReadFrequently: true }) : null;
@@ -3608,7 +3747,7 @@
       const width = 160;
       const sourceY = Math.floor(bitmap.height * 0.34);
       const sourceHeight = Math.max(1, bitmap.height - sourceY);
-      const height = Math.max(80, Math.round(width * sourceHeight / bitmap.width));
+      const height = Math.min(320, Math.max(80, Math.round(width * sourceHeight / bitmap.width)));
       canvas.width = width;
       canvas.height = height;
       context.drawImage(bitmap, 0, sourceY, bitmap.width, sourceHeight, 0, 0, width, height);
@@ -3706,78 +3845,167 @@
     }
   }
 
-  async function terminateOCRWorker(worker) {
-    if (!worker || typeof worker.terminate !== "function") return;
+  function setScanBusy(kind, busy) {
+    const ids = kind === "quick" ? ["quickSaveBtn", "quickSaveAnotherBtn"] : ["saveOcrBtn", "applyOcrBtn"];
+    ids.forEach((id) => { if ($(id)) $(id).disabled = busy; });
+    $(kind === "quick" ? "quickContinueManualBtn" : "continueManualBtn")?.classList[busy ? "remove" : "add"]("hidden");
+  }
+
+  function cancelScan(kind) {
+    if (!activeScan || (kind && activeScan.kind !== kind)) return;
+    const job = activeScan;
+    job.canceled = true;
+    job.rejectCancel(new Error("Scan canceled."));
+    if (job.worker) void job.stopWorker().catch(() => {});
+    setScanBusy(job.kind, false);
+    activeScan = null;
+  }
+
+  // Read dimensions before decoding: compressed byte size alone does not bound iOS memory.
+  async function screenshotDimensions(file) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const view = new DataView(bytes.buffer);
+    if (bytes.length >= 24 && bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71) {
+      return [view.getUint32(16), view.getUint32(20)];
+    }
+    if (bytes[0] === 255 && bytes[1] === 216) {
+      let offset = 2;
+      while (offset + 9 < bytes.length) {
+        if (bytes[offset++] !== 255) break;
+        while (bytes[offset] === 255) offset++;
+        const marker = bytes[offset++];
+        if (marker === 0xda || marker === 0xd9) break;
+        if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+        const size = view.getUint16(offset);
+        if (size < 2 || offset + size > bytes.length) break;
+        if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+          return [view.getUint16(offset + 5), view.getUint16(offset + 3)];
+        }
+        offset += size;
+      }
+    }
+    throw new Error("This file is not a readable PNG or JPEG. Save a screenshot as PNG or JPEG and retry.");
+  }
+
+  async function prepareScreenshot(file, job) {
+    const [width, height] = await job.wait(screenshotDimensions(file));
+    if (!width || !height || width * height > 16000000 || Math.max(width, height) > 16000) {
+      throw new Error("This image is too large to decode safely (16 megapixels maximum). Crop it and retry.");
+    }
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    const canvas = document.createElement("canvas");
     try {
-      await withTimeout(
-        Promise.resolve().then(() => worker.terminate()),
-        OCR_TERMINATE_TIMEOUT_MS,
-        "OCR worker cleanup timed out."
-      );
-    } catch (error) {
-      console.warn("GigLens OCR worker cleanup stopped safely", error);
+      const decoded = new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error("Safari could not decode this image. Try a PNG or JPEG screenshot."));
+        image.src = url;
+      });
+      await job.wait(withTimeout(decoded, 10000, "Image decoding timed out. Try a smaller screenshot."));
+      const ratio = Math.min(1, 2560 / Math.max(image.naturalWidth, image.naturalHeight), Math.sqrt(4000000 / (image.naturalWidth * image.naturalHeight)));
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * ratio));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * ratio));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Image processing is unavailable. Continue manually.");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const blob = await job.wait(withTimeout(new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not prepare the screenshot.")), "image/png")), 10000, "Image preparation timed out."));
+      return blob;
+    } finally {
+      image.onload = image.onerror = null;
+      image.src = "";
+      URL.revokeObjectURL(url);
+      canvas.width = canvas.height = 0;
     }
   }
 
-  async function recognizeScreenshot(file, onProgress) {
-    const api = await ensureOCRLibraryLoaded(onProgress);
-    let worker = null;
-    let workerPromise = null;
+  async function recognizeScreenshot(file, onProgress, job) {
+    const api = await job.wait(ensureOCRLibraryLoaded(onProgress));
+    if (typeof api.createWorker !== "function") throw new Error("OCR worker is unavailable. Reload online or continue manually.");
+    // A canceled initialization must settle and terminate before another worker starts.
+    await job.wait(withTimeout(workerBarrier, OCR_INIT_TIMEOUT_MS, "The previous scanner is still closing. Reload to retry, or continue manually."));
+    const workerPromise = Promise.resolve(api.createWorker("eng", 1, {
+      workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@v5.1.1/dist/worker.min.js",
+      corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0",
+      langPath: "https://tessdata.projectnaptha.com/4.0.0",
+      logger: (message) => { if (!job.canceled) onProgress?.(formatOCRProgress(message)); },
+      errorHandler: (error) => console.error("GigLens OCR worker error", error)
+    }));
+    let stopping = null;
+    job.stopWorker = () => stopping ||= Promise.resolve().then(() => job.worker.terminate());
+    const ready = workerPromise.then(async (worker) => {
+      job.worker = worker;
+      if (job.canceled) await job.stopWorker();
+      return worker;
+    });
+    workerBarrier = ready.then(() => undefined, () => undefined);
     try {
-      if (typeof api.createWorker === "function") {
-        workerPromise = Promise.resolve(api.createWorker("eng", 1, {
-          workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@v5.1.1/dist/worker.min.js",
-          corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@v5.0.0",
-          langPath: "https://tessdata.projectnaptha.com/4.0.0",
-          logger: (message) => onProgress?.(formatOCRProgress(message)),
-          errorHandler: (error) => console.error("GigLens OCR worker error", error)
-        }));
-        try {
-          worker = await withTimeout(workerPromise, OCR_INIT_TIMEOUT_MS, "OCR engine took too long to start. Check your connection and try again.");
-        } catch (error) {
-          void workerPromise.then((lateWorker) => terminateOCRWorker(lateWorker)).catch(() => {});
-          throw error;
-        }
-        return await withTimeout(worker.recognize(file), OCR_RECOGNIZE_TIMEOUT_MS, "OCR took too long. Try a smaller or clearer screenshot.");
-      }
-      if (typeof api.recognize === "function") {
-        return await withTimeout(api.recognize(file, "eng", { logger: (message) => onProgress?.(formatOCRProgress(message)) }), OCR_RECOGNIZE_TIMEOUT_MS, "OCR took too long. Try a smaller or clearer screenshot.");
-      }
-      throw new Error("OCR library loaded without a recognition API.");
+      const worker = await job.wait(withTimeout(ready, OCR_INIT_TIMEOUT_MS, "OCR engine took too long to start. Check your connection and retry."));
+      return await job.wait(withTimeout(worker.recognize(file), OCR_RECOGNIZE_TIMEOUT_MS, "OCR took too long. Try a smaller or clearer screenshot."));
     } finally {
-      await terminateOCRWorker(worker);
+      // Keep the barrier pending if termination stalls; subsequent scans fail safely.
+      job.canceled = true;
+      workerBarrier = workerPromise.then((worker) => { job.worker = worker; return job.stopWorker(); }, () => undefined);
+      try { await withTimeout(workerBarrier, OCR_TERMINATE_TIMEOUT_MS, "OCR worker cleanup timed out."); }
+      catch (error) { console.warn("GigLens scanner cleanup pending", error); }
     }
+  }
+
+  function runScreenshotScan(kind, file, onProgress) {
+    if (activeScan) {
+      const previous = activeScan.kind;
+      cancelScan();
+      if (previous !== kind) (previous === "quick" ? setQuickScanState : setScanState)("failed", "Scan canceled because another screenshot was selected. Retry or continue manually.");
+    }
+    const job = { kind, canceled: false, worker: null, dirty: new Set() };
+    job.cancelPromise = new Promise((_, reject) => { job.rejectCancel = reject; });
+    job.cancelPromise.catch(() => {});
+    job.wait = (promise) => Promise.race([promise, job.cancelPromise]);
+    activeScan = job;
+    setScanBusy(kind, true);
+    const run = scanQueue.catch(() => {}).then(async () => {
+      if (job.canceled) throw new Error("Scan canceled.");
+      const prepared = await prepareScreenshot(file, job);
+      const preview = kind === "quick" ? els.quickPreviewImage : els.previewImage;
+      if (preview.dataset.url) URL.revokeObjectURL(preview.dataset.url);
+      preview.src = preview.dataset.url = URL.createObjectURL(prepared);
+      preview.classList.remove("hidden");
+      const visualEvidence = await job.wait(withTimeout(analyzeScreenshotAccent(prepared), 5000, "Image analysis timed out."));
+      const result = await recognizeScreenshot(prepared, onProgress, job);
+      return { result, visualEvidence, dirty: job.dirty };
+    });
+    scanQueue = run.catch(() => {});
+    return run.finally(() => {
+      if (activeScan === job) { activeScan = null; setScanBusy(kind, false); }
+    });
+  }
+
+  function preserveEditedFields(dirty, populate) {
+    const values = [...dirty].map((id) => [$(id), $(id)?.value]);
+    populate();
+    values.forEach(([field, value]) => { if (field) field.value = value; });
   }
 
   async function scanQuickScreenshot(file) {
     if (!file) return;
-    clearQuickScan(false);
+    clearQuickScan(true);
+    setQuickAddDefaults(true);
     const scanGeneration = quickScanGeneration;
     const validationError = validateScreenshotFile(file);
     if (validationError) {
       setQuickScanState("failed", validationError);
       return;
     }
-    if (els.quickPreviewImage) {
-      if (els.quickPreviewImage.dataset.url) URL.revokeObjectURL(els.quickPreviewImage.dataset.url);
-      const url = URL.createObjectURL(file);
-      els.quickPreviewImage.dataset.url = url;
-      els.quickPreviewImage.src = url;
-      els.quickPreviewImage.classList.remove("hidden");
-    }
     setQuickScanState("loading", "Scanning screenshot for restaurant, pay, miles, and time…");
     try {
-      const [result, visualEvidence] = await Promise.all([
-        recognizeScreenshot(file, (progress) => {
-          if (scanGeneration === quickScanGeneration) setQuickScanState("loading", progress);
-        }),
-        analyzeScreenshotAccent(file)
-      ]);
+      const { result, visualEvidence, dirty } = await runScreenshotScan("quick", file, (progress) => {
+        if (scanGeneration === quickScanGeneration) setQuickScanState("loading", progress);
+      });
       if (scanGeneration !== quickScanGeneration) return;
       quickOCRText = result?.data?.text || "";
       quickOCRParsed = parseOCR(quickOCRText, visualEvidence, { fallbackDate: file.lastModified ? new Date(file.lastModified) : new Date() });
       quickOCRParsed.merchantType = inferMerchantType(quickOCRParsed.merchant, quickOCRText);
-      populateQuickFromOCR(quickOCRParsed);
+      preserveEditedFields(dirty, () => populateQuickFromOCR(quickOCRParsed));
+      renderQuickAddPreview();
       if (els.quickOcrText) els.quickOcrText.textContent = quickOCRText || "No readable text detected.";
       if (els.quickOcrDetails) els.quickOcrDetails.classList.remove("hidden");
       if (els.quickClearScanBtn) els.quickClearScanBtn.classList.remove("hidden");
@@ -3797,6 +4025,7 @@
 
   function saveQuickDelivery(event, options = {}) {
     event.preventDefault();
+    if (activeScan?.kind === "quick") return toast("Wait for the scan or choose Continue manually.");
     const company = allowedCompanies.has(els.quickCompanyInput.value) ? els.quickCompanyInput.value : null;
     if (!company) {
       toast("Choose a valid company.");
@@ -3842,10 +4071,10 @@
       return;
     }
     if (quickOCRText && quickOCRParsed) {
-      recordOCRCorrection(quickOCRParsed, { company, earnings, miles, minutes, merchant: delivery.merchant, merchantType: delivery.merchantType }, quickOCRText, "quick");
+      recordOCRCorrection(quickOCRParsed, { company, earnings, miles, minutes, merchant: delivery.merchant, merchantType: delivery.merchantType }, quickOCRText, "quick", false);
     }
     deliveries.push(delivery);
-    writeJSON(STORE_KEY, deliveries);
+    if (!writeJSON(STORE_KEY, deliveries)) return;
     render();
     toast(`Saved ${money.format(delivery.earnings)} from ${delivery.company}.`);
     if (options.addAnother) {
@@ -3858,7 +4087,7 @@
       clearQuickScan(true);
       els.quickNotesDetails.open = false;
       renderQuickAddPreview();
-      if (typeof els.quickScreenshotInput.focus === "function") els.quickScreenshotInput.focus();
+      $("quickUploadBtn")?.focus();
       return;
     }
     closeQuickAdd();
@@ -3867,34 +4096,27 @@
 
   async function scanScreenshot(file) {
     if (!file) return;
-    clearOCR(false);
+    clearOCR(true);
     const scanGeneration = fullScanGeneration;
     const validationError = validateScreenshotFile(file);
     if (validationError) {
       setScanState("failed", validationError);
       return;
     }
-    if (els.previewImage.dataset.url) URL.revokeObjectURL(els.previewImage.dataset.url);
-    const url = URL.createObjectURL(file);
-    els.previewImage.dataset.url = url;
-    els.previewImage.src = url;
-    els.previewImage.classList.remove("hidden");
     setScanState("loading", "Scanning screenshot…");
 
     try {
-      const [result, visualEvidence] = await Promise.all([
-        recognizeScreenshot(file, (progress) => {
-          if (scanGeneration === fullScanGeneration) setScanState("loading", progress);
-        }),
-        analyzeScreenshotAccent(file)
-      ]);
+      const { result, visualEvidence, dirty } = await runScreenshotScan("full", file, (progress) => {
+        if (scanGeneration === fullScanGeneration) setScanState("loading", progress);
+      });
       if (scanGeneration !== fullScanGeneration) return;
       lastOCRText = result?.data?.text || "";
       lastOCRParsed = parseOCR(lastOCRText, visualEvidence, { fallbackDate: file.lastModified ? new Date(file.lastModified) : new Date() });
       lastOCRParsed.merchantType = inferMerchantType(lastOCRParsed.merchant, lastOCRText);
       els.ocrText.textContent = lastOCRText || "No readable text detected.";
       els.ocrDetails.classList.remove("hidden");
-      renderOCRReview(lastOCRParsed);
+      preserveEditedFields(dirty, () => renderOCRReview(lastOCRParsed));
+      renderOCRSavePreview();
       const label = confidenceLabel(lastOCRParsed.confidence);
       const message = label === "Needs review"
         ? "Scan complete, but confidence is low. Review and correct the fields before saving."
@@ -3912,6 +4134,7 @@
     els.scanStatus.classList.remove("hidden", "loading", "success", "failed");
     els.scanStatus.classList.add(state);
     els.scanStatus.textContent = message;
+    if (state === "failed") $("continueManualBtn")?.classList.remove("hidden");
   }
 
   function confidenceLabel(score) {
@@ -4001,9 +4224,9 @@
     if (els.deliveryDateInput) els.deliveryDateInput.value = localDateInputValue(reviewed.capturedAt);
     if (els.deliveryTimeInput) els.deliveryTimeInput.value = localTimeInputValue(reviewed.capturedAt);
     if (els.merchantInput) els.merchantInput.value = reviewed.merchant || "";
-    recordOCRCorrection(parsed, { ...reviewed, merchantType: inferMerchantType(reviewed.merchant, lastOCRText) }, lastOCRText, "review");
+
     renderDeliveryPreview();
-    toast("Reviewed OCR fields moved into the manual form. Corrections were learned locally.");
+    toast("Reviewed OCR fields moved into the manual form. Save to keep your corrections.");
   }
 
   function readOCRReviewFields() {
@@ -4047,6 +4270,7 @@
   }
 
   function saveReviewedOCR() {
+    if (activeScan?.kind === "full") return toast("Wait for the scan or choose Continue manually.");
     if (!lastOCRParsed) return toast("Scan a screenshot before saving OCR results.");
     const reviewed = readOCRReviewFields();
     if (!reviewed) return;
@@ -4072,9 +4296,9 @@
       version: DATA_VERSION
     });
     if (!delivery) return toast("Could not save the reviewed OCR delivery.");
-    const learned = recordOCRCorrection(lastOCRParsed, { ...reviewed, merchantType: delivery.merchantType }, lastOCRText, "review");
+    const learned = recordOCRCorrection(lastOCRParsed, { ...reviewed, merchantType: delivery.merchantType }, lastOCRText, "review", false);
     deliveries.push(delivery);
-    writeJSON(STORE_KEY, deliveries);
+    if (!writeJSON(STORE_KEY, deliveries)) return;
     clearForm(false);
     render();
     showSavedDeliveryDay(delivery);
@@ -4082,6 +4306,7 @@
   }
 
   function clearOCR(clearFile = true) {
+    cancelScan("full");
     fullScanGeneration += 1;
     lastOCRText = "";
     lastOCRParsed = null;
@@ -4587,6 +4812,9 @@
 
     const existingId = els.editDeliveryId.value;
     const existing = existingId ? deliveries.find((d) => d.id === existingId) : null;
+    if (existingId && (!existing || existing.deleted || JSON.stringify(existing) !== editedDeliveryVersion)) {
+      return toast("This delivery changed in another window. Your draft is intact; reopen the latest delivery before editing.");
+    }
     const savedAt = new Date();
     const deliveryTimestamp = combineLocalDateTime(
       els.deliveryDateInput?.value,
@@ -4628,9 +4856,10 @@
     });
     if (!delivery) return toast("Could not save this delivery. Check the fields and try again.");
 
+    if (lastOCRText && lastOCRParsed) recordOCRCorrection(lastOCRParsed, { company, earnings, miles, minutes, merchant: delivery.merchant, merchantType: delivery.merchantType }, lastOCRText, "review", false);
     if (existingId) deliveries = deliveries.map((d) => d.id === existingId ? delivery : d);
     else deliveries.push(delivery);
-    writeJSON(STORE_KEY, deliveries);
+    if (!writeJSON(STORE_KEY, deliveries)) return;
     clearForm(!options.stayOnForm);
     render();
     if (!options.stayOnForm) showSavedDeliveryDay(delivery);
@@ -4639,6 +4868,7 @@
 
   function clearForm(keepCompany = true) {
     els.editDeliveryId.value = "";
+    editedDeliveryVersion = null;
     if (!keepCompany) els.companyInput.value = settings.defaultCompany || "DoorDash";
     els.earningsInput.value = "";
     els.milesInput.value = "";
@@ -4659,6 +4889,7 @@
     const d = deliveries.find((item) => item.id === id);
     if (!d) return;
     els.editDeliveryId.value = d.id;
+    editedDeliveryVersion = JSON.stringify(d);
     els.companyInput.value = d.company;
     els.earningsInput.value = Number(d.earnings).toFixed(2);
     els.milesInput.value = Number(d.miles).toFixed(1);
@@ -4680,7 +4911,7 @@
     const copy = normalizeDelivery({ ...d, id: makeId(), source: "manual", ocrText: "", ocrConfidence: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), notes: d.notes ? `${d.notes} duplicate` : "" });
     if (!copy) return;
     deliveries.push(copy);
-    writeJSON(STORE_KEY, deliveries);
+    if (!writeJSON(STORE_KEY, deliveries)) return;
     render();
     toast("Delivery duplicated for today.");
   }
@@ -4691,7 +4922,7 @@
     if (!confirm(`Delete ${money.format(Number(item.earnings || 0))} ${item.company} delivery?`)) return;
     lastDeleted = item;
     deliveries = deliveries.filter((d) => d.id !== id);
-    writeJSON(STORE_KEY, deliveries);
+    if (!writeJSON(STORE_KEY, deliveries)) return;
     render();
     toast("Delivery deleted.", { label: "Undo", handler: undoDelete });
   }
@@ -4701,7 +4932,7 @@
     if (!deliveries.some((d) => d.id === lastDeleted.id)) {
       deliveries.push(lastDeleted);
       deliveries = normalizeDeliveries(deliveries);
-      writeJSON(STORE_KEY, deliveries);
+      if (!writeJSON(STORE_KEY, deliveries)) return;
       render();
       toast("Delivery restored.");
     }
@@ -4714,7 +4945,7 @@
     if (!confirm(`Delete ${todays.length} ${todays.length === 1 ? "delivery" : "deliveries"} from today?`)) return;
     const today = todayKey();
     deliveries = deliveries.filter((d) => todayKey(new Date(d.createdAt)) !== today);
-    writeJSON(STORE_KEY, deliveries);
+    if (!writeJSON(STORE_KEY, deliveries)) return;
     render();
     showTab("today");
     toast("Today's deliveries deleted.");
@@ -4736,7 +4967,7 @@
       defaultZone: els.defaultZoneInput.value,
       customZones: settings.customZones || []
     });
-    writeJSON(SETTINGS_KEY, settings);
+    if (!writeJSON(SETTINGS_KEY, settings)) return;
     els.companyInput.value = settings.defaultCompany;
     els.offerCompanyInput.value = settings.defaultCompany;
     els.offerZoneInput.value = settings.defaultZone || "";
@@ -4771,8 +5002,8 @@
     const decision = decisionFromCurrentOffer();
     if (!decision) return options.silent ? null : toast("Enter a valid offer and calculate it before logging.");
     decisions.push(decision);
-    writeJSON(DECISIONS_KEY, decisions);
-    renderDecisionLog();
+    if (!options.defer && !writeJSON(DECISIONS_KEY, decisions)) return;
+    if (!options.defer) renderDecisionLog();
     if (!options.silent) toast(`${decision.outcome} decision logged.`);
     return decision;
   }
@@ -4798,13 +5029,15 @@
   }
 
   async function exportDecisionCSV() {
+    if (!refreshForExport()) return;
     const rows = [["createdAt", "outcome", "company", "pay", "miles", "minutes", "zone", "note"]];
     decisions.forEach((d) => rows.push([d.createdAt, d.outcome, d.company, d.pay.toFixed(2), d.miles.toFixed(1), d.minutes, d.zone, d.note]));
-    await shareOrDownload(csvRowsToText(rows), `giglens-decisions-${todayKey()}.csv`, "text/csv;charset=utf-8");
-    toast(decisions.length ? "Decision CSV exported." : "Decision CSV exported with headers only.");
+    const outcome = await shareOrDownload("\uFEFF" + csvRowsToText(rows), `giglens-decisions-${todayKey()}.csv`, "text/csv;charset=utf-8");
+    announceExport(outcome, decisions.length ? "Decision CSV" : "Header-only decision CSV");
   }
 
   function togglePauseShift() {
+    let message;
     if (!shift.active || !shift.startedAt) return toast("Start the day before taking a break.");
     const now = new Date().toISOString();
     const breaks = [...(shift.breaks || [])];
@@ -4812,17 +5045,19 @@
       const openIndex = breaks.map((item) => item.endedAt).lastIndexOf(null);
       if (openIndex >= 0) breaks[openIndex] = { ...breaks[openIndex], endedAt: now };
       shift = normalizeShift({ ...shift, paused: false, pausedAt: null, breaks });
-      toast("Shift resumed. Active time is running again.");
+      message = "Shift resumed. Active time is running again.";
     } else {
       breaks.push({ startedAt: now, endedAt: null });
       shift = normalizeShift({ ...shift, paused: true, pausedAt: now, breaks });
-      toast("Shift paused. Break time will not count toward hourly pace.");
+      message = "Shift paused. Break time will not count toward hourly pace.";
     }
-    writeJSON(SHIFT_KEY, shift);
+    if (!writeJSON(SHIFT_KEY, shift)) return;
     render();
+    toast(message);
   }
 
   function toggleShift() {
+    let message;
     if (shift.active && shift.startedAt) {
       const now = new Date().toISOString();
       if (shift.paused) {
@@ -4867,13 +5102,14 @@
           }
         ]
       });
-      toast("Day ended. Recap saved to shift history.");
+      message = "Day ended. Recap saved to shift history.";
     } else {
       shift = normalizeShift({ ...shift, active: true, paused: false, pausedAt: null, breaks: [], startedAt: new Date().toISOString(), endedAt: null });
-      toast("Day started. The clock is running.");
+      message = "Day started. The clock is running.";
     }
-    writeJSON(SHIFT_KEY, shift);
+    if (!writeJSON(SHIFT_KEY, shift)) return;
     render();
+    toast(message);
   }
 
   function buildShiftSummaryText(rows, c = calculate(rows)) {
@@ -4891,7 +5127,8 @@
   }
 
   function csvEscape(cell) {
-    const value = cell === null || cell === undefined ? "" : String(cell);
+    let value = cell === null || cell === undefined ? "" : String(cell);
+    if (typeof cell === "string" && /^[\s]*[=+@-]/.test(value)) value = "\'" + value;
     return `"${value.replace(/"/g, '""')}"`;
   }
 
@@ -4956,7 +5193,7 @@
       const header = ["date", "total_earnings", "estimated_profit", "miles", "deliveries", "average_dollars_per_mile", "gross_hour", "profit_hour"];
       return csvRowsToText([header, ...buildDailySummaryRows()]);
     }
-    const header = ["date", "company", "restaurant", "earnings", "miles", "minutes", "zone", "note", "source"];
+    const header = ["date", "company", "restaurant", "earnings", "miles", "minutes", "zone", "note", "source", "local_date", "created_at", "captured_at"];
     const rows = activeRows.map((d) => [
       exportDateValue(d),
       d.company,
@@ -4966,41 +5203,56 @@
       d.minutes || "",
       d.zone || "",
       d.notes || d.note || "",
-      d.source || "manual"
+      d.source || "manual",
+      d.date || todayKey(new Date(d.createdAt)),
+      d.createdAt || "",
+      d.capturedAt || ""
     ]);
     return csvRowsToText([header, ...rows]);
   }
 
+  function prepareDownload(content, filename, type) {
+    if (exportObjectURL) URL.revokeObjectURL(exportObjectURL);
+    exportObjectURL = URL.createObjectURL(new Blob([content], { type }));
+    const link = $("exportDownloadLink");
+    link.href = exportObjectURL;
+    link.download = filename;
+    $("exportDownloadPanel")?.classList.remove("hidden");
+    return link;
+  }
+
   async function shareOrDownload(content, filename, type) {
-    if (navigator.canShare && typeof File === "function") {
+    if (navigator.canShare && typeof navigator.share === "function" && typeof File === "function") {
       try {
         const file = new File([content], filename, { type });
         if (navigator.canShare({ files: [file] })) {
           await navigator.share({ files: [file], title: filename });
-          return;
+          return "shared";
         }
-      } catch (err) {
-        if (err && err.name === "AbortError") return;
+      } catch (error) {
+        if (error?.name === "AbortError") return "canceled";
+        prepareDownload(content, filename, type);
+        toast("Sharing was unavailable. Tap Download file to save a copy.");
+        return "failed";
       }
     }
-    const blob = new Blob([content], { type });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    const link = prepareDownload(content, filename, type);
+    link.click();
+    return "download-started";
+  }
+
+  function announceExport(outcome, description) {
+    if (outcome === "shared") toast(`${description} shared.`);
+    else if (outcome === "download-started") toast(`${description} download started. The download link remains available.`);
+    else if (outcome === "canceled") toast("Export canceled. No file was saved by this action.");
   }
 
   async function exportCSV(kind = "standard") {
-    const csv = "﻿" + buildCSV(kind);
+    if (!refreshForExport()) return;
+    const csv = "\uFEFF" + buildCSV(kind);
     const suffixMap = { tax: "tax", daily: "daily-summary", standard: "deliveries" };
-    const labelMap = { tax: "Tax CSV exported.", daily: "Daily summary CSV exported.", standard: "CSV exported." };
-    await shareOrDownload(csv, `giglens-${suffixMap[kind] || "deliveries"}-${todayKey()}.csv`, "text/csv;charset=utf-8");
-    const activeCount = activeDeliveriesSorted().length;
-    toast(activeCount ? (labelMap[kind] || "CSV exported.") : `${labelMap[kind] || "CSV exported."} Header-only file because no deliveries are saved yet.`);
+    const outcome = await shareOrDownload(csv, `giglens-${suffixMap[kind] || "deliveries"}-${todayKey()}.csv`, "text/csv;charset=utf-8");
+    announceExport(outcome, activeDeliveriesSorted().length ? "CSV" : "Header-only CSV");
   }
 
   function buildBackupPayload(reason = "manual export") {
@@ -5027,10 +5279,20 @@
     };
   }
 
+  function refreshForExport() {
+    try {
+      canonical = readCanonical();
+      restoreCanonicalModel();
+      if (deliveries.length !== (canonical.values[STORE_KEY] || []).length || decisions.length !== (canonical.values[DECISIONS_KEY] || []).length) throw new Error("Damaged records");
+      return true;
+    } catch { exportRecoveryData(); return false; }
+  }
+
   async function exportBackup() {
+    if (!refreshForExport()) return;
     const backup = buildBackupPayload("manual export");
-    await shareOrDownload(JSON.stringify(backup, null, 2), `giglens-backup-${todayKey()}.json`, "application/json;charset=utf-8");
-    toast("Backup exported.");
+    const outcome = await shareOrDownload(JSON.stringify(backup, null, 2), `giglens-backup-${todayKey()}.json`, "application/json;charset=utf-8");
+    announceExport(outcome, "Backup");
   }
 
   function parseBackupDate(value) {
@@ -5141,13 +5403,9 @@
   }
 
   function saveImportRollback(reason = "pre-import rollback") {
-    const rollback = {
-      ...buildBackupPayload(reason),
-      savedAt: new Date().toISOString(),
-      reason
-    };
-    writeJSON(ROLLBACK_KEY, rollback);
-    writeJSON(LAST_BACKUP_KEY, rollback);
+    const snapshot = JSON.parse(JSON.stringify(buildBackupPayload(reason)));
+    recoveryChanges[ROLLBACK_KEY] = snapshot;
+    recoveryChanges[LAST_BACKUP_KEY] = snapshot;
   }
 
   function mergeImportedDeliveries(currentDeliveries, importedDeliveries) {
@@ -5189,7 +5447,7 @@
       if (pendingImport.ocrLearningIncluded) ocrLearning = normalizeOCRLearning(pendingImport.ocrLearning);
       if (pendingImport.settingsIncluded) settings = normalizeSettings(pendingImport.settings);
       if (pendingImport.shiftIncluded) shift = normalizeShift(pendingImport.shift);
-      persistNormalizedState();
+      if (!persistNormalizedState()) return;
       render();
       const count = deliveries.filter((d) => !d.deleted).length;
       clearPendingImport();
@@ -5203,9 +5461,7 @@
       if (!existingDecisionIds.has(item.id)) { decisions.push(item); existingDecisionIds.add(item.id); }
     }
     ocrLearning = mergeOCRLearning(ocrLearning, pendingImport.ocrLearning);
-    writeJSON(STORE_KEY, deliveries);
-    writeJSON(DECISIONS_KEY, decisions);
-    writeJSON(OCR_LEARNING_KEY, ocrLearning);
+    if (!persistNormalizedState()) return;
     render();
     clearPendingImport();
     toast(`Backup merged. Added ${result.added} deliveries; skipped ${result.skipped} duplicates.`);
@@ -5216,23 +5472,20 @@
     const validation = validateBackupPayload(rollback);
     if (!rollback || !validation.valid) return toast("No valid import rollback backup found.");
     if (!confirm(`Restore rollback from ${parseBackupDate(rollback.savedAt || rollback.exportedAt)}? This replaces current local data.`)) return;
+    saveSafetySnapshot("before rollback restore");
     deliveries = normalizeDeliveries(validation.deliveries);
     decisions = normalizeDecisions(validation.decisions || []);
     if (validation.ocrLearningIncluded) ocrLearning = normalizeOCRLearning(validation.ocrLearning);
     settings = validation.settingsIncluded ? normalizeSettings(validation.settings) : settings;
     shift = validation.shiftIncluded ? normalizeShift(validation.shift) : shift;
-    persistNormalizedState();
+    if (!persistNormalizedState()) return;
     render();
     toast("Rollback restored.");
   }
 
   function saveSafetySnapshot(reason = "privacy safety snapshot") {
-    const snapshot = {
-      ...buildBackupPayload(reason),
-      savedAt: new Date().toISOString(),
-      reason
-    };
-    writeJSON(LAST_BACKUP_KEY, snapshot);
+    const snapshot = JSON.parse(JSON.stringify(buildBackupPayload(reason)));
+    recoveryChanges[LAST_BACKUP_KEY] = snapshot;
     return snapshot;
   }
 
@@ -5243,8 +5496,7 @@
   }
 
   function exportAllData() {
-    saveSafetySnapshot("manual privacy export snapshot");
-    exportBackup();
+    return exportBackup();
   }
 
   function restoreSafetyBackup() {
@@ -5252,17 +5504,13 @@
     const validation = validateBackupPayload(backup);
     if (!backup || !validation.valid) return toast("No valid emergency backup or import rollback found.");
     if (!confirm(`Restore emergency backup from ${parseBackupDate(backup.savedAt || backup.exportedAt)}? This replaces current local data.`)) return;
-    writeJSON(ROLLBACK_KEY, {
-      ...buildBackupPayload("pre-emergency-restore rollback"),
-      savedAt: new Date().toISOString(),
-      reason: "pre-emergency-restore rollback"
-    });
+    recoveryChanges[ROLLBACK_KEY] = JSON.parse(JSON.stringify(buildBackupPayload("pre-emergency-restore rollback")));
     deliveries = normalizeDeliveries(validation.deliveries);
     decisions = normalizeDecisions(validation.decisions || []);
     if (validation.ocrLearningIncluded) ocrLearning = normalizeOCRLearning(validation.ocrLearning);
     settings = validation.settingsIncluded ? normalizeSettings(validation.settings) : settings;
     shift = validation.shiftIncluded ? normalizeShift(validation.shift) : shift;
-    persistNormalizedState();
+    if (!persistNormalizedState()) return;
     render();
     toast("Emergency backup restored.");
   }
@@ -5271,7 +5519,7 @@
     if (!doubleConfirmDanger("Reset settings only", "RESET")) return toast("Settings reset canceled.");
     saveSafetySnapshot("pre-settings-reset snapshot");
     settings = normalizeSettings({});
-    writeJSON(SETTINGS_KEY, settings);
+    if (!writeJSON(SETTINGS_KEY, settings)) return;
     render();
     toast("Settings reset to defaults. Deliveries were kept.");
   }
@@ -5280,7 +5528,7 @@
     if (!doubleConfirmDanger("Reset deliveries only", "RESET")) return toast("Delivery reset canceled.");
     saveSafetySnapshot("pre-deliveries-reset snapshot");
     deliveries = [];
-    writeJSON(STORE_KEY, deliveries);
+    if (!writeJSON(STORE_KEY, deliveries)) return;
     render();
     toast("Deliveries reset. Settings and shift data were kept.");
   }
@@ -5293,7 +5541,7 @@
     ocrLearning = normalizeOCRLearning(null);
     settings = normalizeSettings({});
     shift = normalizeShift({ active: false, startedAt: null, endedAt: null, shiftHistory: [] });
-    persistNormalizedState();
+    if (!persistNormalizedState()) return;
     render();
     toast("All active GigLens data cleared. Emergency restore remains available on this browser.");
   }
@@ -5328,7 +5576,7 @@
     }
     const company = allowedCompanies.has(els.offerCompanyInput.value) ? els.offerCompanyInput.value : settings.defaultCompany;
     const note = cleanText(els.offerNoteInput.value || "Saved from accept calculator", 400);
-    logCurrentDecision({ silent: true });
+    logCurrentDecision({ silent: true, defer: true });
     const now = new Date().toISOString();
     const delivery = normalizeDelivery({
       id: makeId(),
@@ -5346,7 +5594,7 @@
     });
     if (!delivery) return toast("Could not save this offer.");
     deliveries.push(delivery);
-    writeJSON(STORE_KEY, deliveries);
+    if (!writeJSON(STORE_KEY, deliveries)) return;
     clearOfferCalculator();
     render();
     showTab("today");
@@ -5395,44 +5643,44 @@
     document.querySelectorAll("[data-open-add]").forEach((btn) => btn.addEventListener("click", () => openAdd(btn.dataset.openAdd)));
     document.querySelectorAll("[data-quick-add-open]").forEach((btn) => btn.addEventListener("click", openQuickAdd));
     document.querySelectorAll("[data-quick-add-cancel]").forEach((btn) => btn.addEventListener("click", closeQuickAdd));
-    $("deliveryForm").addEventListener("submit", saveDelivery);
-    els.quickAddForm.addEventListener("submit", saveQuickDelivery);
-    els.saveSettingsBtn.addEventListener("click", saveSettings);
+    $("deliveryForm").addEventListener("submit", mutate(saveDelivery));
+    els.quickAddForm.addEventListener("submit", mutate(saveQuickDelivery));
+    els.saveSettingsBtn.addEventListener("click", mutate(saveSettings));
     if (els.taxRateModeInput) els.taxRateModeInput.addEventListener("change", renderTaxRateMode);
-    els.addCustomZoneBtn.addEventListener("click", addCustomZone);
-    els.customZoneInput.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); addCustomZone(); } });
-    els.customZoneList.addEventListener("click", handleCustomZoneAction);
-    els.applySmartGoalBtn.addEventListener("click", applySmartGoal);
+    els.addCustomZoneBtn.addEventListener("click", mutate(addCustomZone));
+    els.customZoneInput.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); mutate(addCustomZone)(); } });
+    els.customZoneList.addEventListener("click", mutate(handleCustomZoneAction));
+    els.applySmartGoalBtn.addEventListener("click", mutate(applySmartGoal));
     els.ignoreSmartGoalBtn.addEventListener("click", ignoreSmartGoal);
-    els.clearTodayBtn.addEventListener("click", clearToday);
+    els.clearTodayBtn.addEventListener("click", mutate(clearToday));
     els.exportBtn.addEventListener("click", () => exportCSV("standard"));
     els.exportTaxBtn.addEventListener("click", () => exportCSV("tax"));
     els.exportDailyBtn.addEventListener("click", () => exportCSV("daily"));
     els.backupBtn.addEventListener("click", exportBackup);
     els.privacyExportAllBtn.addEventListener("click", exportAllData);
-    els.privacyRestoreSafetyBtn.addEventListener("click", restoreSafetyBackup);
-    if (els.resetOcrLearningBtn) els.resetOcrLearningBtn.addEventListener("click", resetOCRLearning);
-    els.resetSettingsBtn.addEventListener("click", resetSettingsOnly);
-    els.resetDeliveriesBtn.addEventListener("click", resetDeliveriesOnly);
-    els.clearAllDataBtn.addEventListener("click", clearAllLocalData);
-    els.restoreRollbackBtn.addEventListener("click", restoreRollback);
+    els.privacyRestoreSafetyBtn.addEventListener("click", mutate(restoreSafetyBackup));
+    if (els.resetOcrLearningBtn) els.resetOcrLearningBtn.addEventListener("click", mutate(resetOCRLearning));
+    els.resetSettingsBtn.addEventListener("click", mutate(resetSettingsOnly));
+    els.resetDeliveriesBtn.addEventListener("click", mutate(resetDeliveriesOnly));
+    els.clearAllDataBtn.addEventListener("click", mutate(clearAllLocalData));
+    els.restoreRollbackBtn.addEventListener("click", mutate(restoreRollback));
     els.importInput.addEventListener("change", (event) => importBackup(event.target.files?.[0]));
-    els.confirmImportBtn.addEventListener("click", confirmImportBackup);
+    els.confirmImportBtn.addEventListener("click", mutate(confirmImportBackup));
     els.cancelImportBtn.addEventListener("click", () => { clearPendingImport(); toast("Import canceled."); });
     els.importModeInput.addEventListener("change", updateImportModeHelp);
     els.copySummaryBtn.addEventListener("click", copySummary);
-    els.shiftBtn.addEventListener("click", toggleShift);
-    if (els.heroShiftBtn) els.heroShiftBtn.addEventListener("click", toggleShift);
-    if (els.pauseShiftBtn) els.pauseShiftBtn.addEventListener("click", togglePauseShift);
+    els.shiftBtn.addEventListener("click", mutate(toggleShift));
+    if (els.heroShiftBtn) els.heroShiftBtn.addEventListener("click", mutate(toggleShift));
+    if (els.pauseShiftBtn) els.pauseShiftBtn.addEventListener("click", mutate(togglePauseShift));
     els.toast.addEventListener("click", (event) => {
       if (event.target.closest("[data-toast-action]") && toastAction) {
         const action = toastAction;
         toastAction = null;
-        action();
+        mutate(action)();
       }
     });
-    els.screenshotInput.addEventListener("change", (event) => scanScreenshot(event.target.files?.[0]));
-    els.saveOcrBtn.addEventListener("click", saveReviewedOCR);
+    els.screenshotInput.addEventListener("change", (event) => { const file = event.target.files?.[0]; event.target.value = ""; return scanScreenshot(file); });
+    els.saveOcrBtn.addEventListener("click", mutate(saveReviewedOCR));
     els.applyOcrBtn.addEventListener("click", () => applyParsedResult(lastOCRParsed));
     els.cancelOcrBtn.addEventListener("click", () => clearOCR(true));
     els.clearOcrBtn.addEventListener("click", () => clearOCR(true));
@@ -5440,46 +5688,68 @@
       input.addEventListener("input", renderOCRSavePreview);
       input.addEventListener("change", renderOCRSavePreview);
     });
-    els.quickSaveAnotherBtn.addEventListener("click", () => saveQuickDelivery({ preventDefault() {} }, { addAnother: true }));
-    els.quickScreenshotInput.addEventListener("change", (event) => scanQuickScreenshot(event.target.files?.[0]));
+    els.quickSaveAnotherBtn.addEventListener("click", mutate(() => saveQuickDelivery({ preventDefault() {} }, { addAnother: true })));
+    els.quickScreenshotInput.addEventListener("change", (event) => { const file = event.target.files?.[0]; event.target.value = ""; return scanQuickScreenshot(file); });
     els.quickClearScanBtn.addEventListener("click", () => clearQuickScan(true));
     [els.quickEarningsInput, els.quickMilesInput, els.quickMinutesInput, els.quickMerchantInput, els.quickDateInput, els.quickTimeInput].filter(Boolean).forEach((input) => input.addEventListener("input", renderQuickAddPreview));
     els.quickCompanyInput.addEventListener("change", renderQuickAddPreview);
-    els.saveAddAnotherBtn.addEventListener("click", () => saveDelivery({ preventDefault() {} }, { stayOnForm: true }));
+    els.saveAddAnotherBtn.addEventListener("click", mutate(() => saveDelivery({ preventDefault() {} }, { stayOnForm: true })));
     els.cancelEditBtn.addEventListener("click", () => { clearForm(false); render(); });
     [els.earningsInput, els.milesInput, els.minutesInput].forEach((input) => input.addEventListener("input", renderDeliveryPreview));
     [els.offerPayInput, els.offerMilesInput, els.offerMinutesInput, els.offerCompanyInput, els.offerZoneInput, els.offerNoteInput].forEach((input) => input.addEventListener("input", renderDecision));
     els.calculateOfferBtn.addEventListener("click", () => renderDecision({ announce: true }));
-    if (els.logDecisionBtn) els.logDecisionBtn.addEventListener("click", () => logCurrentDecision());
+    if (els.logDecisionBtn) els.logDecisionBtn.addEventListener("click", mutate(() => logCurrentDecision()));
     if (els.exportDecisionsBtn) els.exportDecisionsBtn.addEventListener("click", exportDecisionCSV);
     els.clearOfferBtn.addEventListener("click", () => { clearOfferCalculator(); toast("Calculator cleared."); });
     els.copyDecisionBtn.addEventListener("click", copyDecisionSummary);
-    els.saveOfferAsDeliveryBtn.addEventListener("click", saveOfferAsDelivery);
+    els.saveOfferAsDeliveryBtn.addEventListener("click", mutate(saveOfferAsDelivery));
     els.historyList.addEventListener("click", (event) => {
       const action = event.target.closest("[data-delete],[data-edit],[data-duplicate],[data-open-add],[data-history-more]");
       if (!action) return;
       if (action.dataset.historyMore !== undefined) {
         historyDayLimit += HISTORY_PAGE_DAYS;
         renderHistory();
-      } else if (action.dataset.delete) deleteDelivery(action.dataset.delete);
+      } else if (action.dataset.delete) mutate(deleteDelivery)(action.dataset.delete);
       else if (action.dataset.edit) editDelivery(action.dataset.edit);
-      else if (action.dataset.duplicate) duplicateDelivery(action.dataset.duplicate);
+      else if (action.dataset.duplicate) mutate(duplicateDelivery)(action.dataset.duplicate);
       else if (action.dataset.openAdd) openAdd(action.dataset.openAdd);
     });
     if (els.calendarDayList) els.calendarDayList.addEventListener("click", (event) => {
       const action = event.target.closest("[data-delete],[data-edit],[data-duplicate]");
       if (!action) return;
-      if (action.dataset.delete) deleteDelivery(action.dataset.delete);
+      if (action.dataset.delete) mutate(deleteDelivery)(action.dataset.delete);
       else if (action.dataset.edit) editDelivery(action.dataset.edit);
-      else if (action.dataset.duplicate) duplicateDelivery(action.dataset.duplicate);
+      else if (action.dataset.duplicate) mutate(duplicateDelivery)(action.dataset.duplicate);
     });
+    $("quickContinueManualBtn")?.addEventListener("click", () => { clearQuickScan(true); els.quickManualDetails.open = true; els.quickEarningsInput.focus(); });
+    $("continueManualBtn")?.addEventListener("click", () => { clearOCR(true); els.earningsInput.focus(); });
+    $("quickUploadBtn")?.addEventListener("click", () => els.quickScreenshotInput.click());
+    $("uploadBtn")?.addEventListener("click", () => els.screenshotInput.click());
+    $("exportDismissBtn")?.addEventListener("click", () => {
+      $("exportDownloadPanel")?.classList.add("hidden");
+      if (exportObjectURL) URL.revokeObjectURL(exportObjectURL);
+      exportObjectURL = null;
+    });
+    window.visualViewport?.addEventListener("resize", updateSheetViewport);
+    window.visualViewport?.addEventListener("scroll", updateSheetViewport);
+    const trackEdits = (event) => { formDirty = true; if (activeScan && event.target?.id) activeScan.dirty.add(event.target.id); };
+    document.addEventListener("input", trackEdits);
+    document.addEventListener("change", trackEdits);
     document.addEventListener("keydown", (event) => {
+      if (event.key === "Tab" && !els.quickAddSheet.classList.contains("hidden")) {
+        const fields = [...els.quickAddSheet.querySelectorAll('button:not([disabled]), input:not([type="file"]):not([disabled]), select:not([disabled]), summary, a[href]')]
+          .filter((node) => node.getClientRects().length);
+        const first = fields[0], last = fields[fields.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !els.quickAddSheet.contains(document.activeElement))) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || !els.quickAddSheet.contains(document.activeElement))) { event.preventDefault(); first?.focus(); }
+      }
       if (event.key === "Escape" && !els.quickAddSheet.classList.contains("hidden")) closeQuickAdd();
     });
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) checkDayAndRender(true);
+      if (!document.hidden) { refreshStoredState(); checkDayAndRender(true); }
     });
-    window.addEventListener("pageshow", () => checkDayAndRender(true));
+    window.addEventListener("pageshow", () => { refreshStoredState(); checkDayAndRender(true); });
+    window.addEventListener("storage", (event) => { if (event.key === STATE_KEY) refreshStoredState(); });
     window.addEventListener("online", updateNetworkStatus);
     window.addEventListener("offline", updateNetworkStatus);
   }
@@ -5500,18 +5770,45 @@
     const offline = navigator.onLine === false;
     if (offline) els.offlineBanner.classList.remove("hidden");
     else els.offlineBanner.classList.add("hidden");
-    if (offline) els.offlineBanner.textContent = "Offline mode is active. Tracking, history, analytics, and exports still work; screenshot OCR may need internet if the OCR library has not loaded yet.";
+    if (offline) els.offlineBanner.textContent = "Offline mode: tracking, history, analytics, and exports work after installation. Screenshot OCR requires internet; manual entry is available.";
   }
 
   function registerServiceWorker() {
     if (!document.querySelector('link[rel="manifest"]')) return;
-    if ("serviceWorker" in navigator && ["http:", "https:"].includes(location.protocol)) {
-      navigator.serviceWorker.register("service-worker.js").catch((err) => console.warn("Service worker registration failed", err));
-    }
+    if (!("serviceWorker" in navigator) || !["http:", "https:"].includes(location.protocol)) return;
+    let updateApproved = false;
+    const showUpdate = (registration) => {
+      waitingWorker = registration.waiting;
+      if (waitingWorker && navigator.serviceWorker.controller) $("updateBanner")?.classList.remove("hidden");
+    };
+    $("applyUpdateBtn")?.addEventListener("click", () => {
+      if (!waitingWorker) return;
+      if ((formDirty || activeScan) && !confirm("Updating reloads the app and discards unsaved fields. Update now?")) return;
+      updateApproved = true;
+      waitingWorker.postMessage({ type: "APPLY_UPDATE" });
+    });
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (updateApproved) location.reload();
+    });
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data?.type === "UPDATE_BLOCKED") {
+        updateApproved = false;
+        toast("Close other GigLens tabs or windows, then tap Update app again. Their drafts have been kept.");
+      }
+    });
+    navigator.serviceWorker.register("service-worker.js", { updateViaCache: "none" }).then((registration) => {
+      showUpdate(registration);
+      registration.addEventListener("updatefound", () => {
+        const installing = registration.installing;
+        installing?.addEventListener("statechange", () => { if (installing.state === "installed") showUpdate(registration); });
+      });
+    }).catch((error) => {
+      console.warn("Service worker registration failed", error);
+      toast("Offline installation is unavailable. Keep this page online and export regular backups.");
+    });
   }
 
   function init() {
-    persistNormalizedState();
     els.companyInput.value = settings.defaultCompany;
     els.offerCompanyInput.value = settings.defaultCompany;
     els.offerZoneInput.value = settings.defaultZone || "";
@@ -5525,7 +5822,12 @@
     renderZoneControls();
     setQuickAddDefaults(true);
     bindEvents();
+    $("recoveryExportBtn")?.addEventListener("click", exportRecoveryData);
     render();
+    if (deliveries.length !== (canonical.values[STORE_KEY] || []).length || decisions.length !== (canonical.values[DECISIONS_KEY] || []).length) {
+      storageProblem = "Some saved records need recovery. Export recovery data before repairing storage; nothing has been overwritten.";
+    }
+    if (storageProblem) showStorageProblem(storageProblem);
     updateNetworkStatus();
     registerServiceWorker();
     setInterval(() => checkDayAndRender(false), 30000);

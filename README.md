@@ -1,3 +1,15 @@
+# GigLens 4.6.0 — Safari reliability
+
+This release fixes the iPhone/iPad Safari audit findings. Deliveries, decisions, settings, shifts, OCR learning, and recovery snapshots commit together in one versioned local-storage envelope. Failed writes preserve the draft and the original ledger. Legacy keys are read without changing them; the first successful user save migrates them. Corrupt data opens in recovery mode, with raw export available in Settings.
+
+Screenshot scans now share one cancellable worker, preserve fields edited during recognition, clear prior results on replacement, and block saving a pending scan. PNG/JPEG uploads are limited to 20 MB and 16 megapixels before decoding, then resized to at most 4 megapixels / 2560 pixels per side. OCR downloads its pinned engine and language resources from the internet; offline manual tracking and exports remain available after the PWA is installed.
+
+CSV exports include a UTF-8 BOM, local dates and original timestamps. Share cancellation is reported accurately; share failures offer a persistent Download file link. Safe-area spacing, 16px inputs, keyboard-aware sheets, focus trapping, accessible upload buttons, and CSP-compatible charts are repaired.
+
+PWA updates cache a complete release and wait for explicit acceptance. Close other GigLens windows before applying an update; unsaved fields require confirmation. New caches are isolated by the app's hosting scope. Icon, test, and tool directories now match the shipped references.
+
+Run `npm run syntax`, `npm test`, and `npm run safari`. Browser checks: `npm run browser` after installing Playwright and its WebKit browser/dependencies. See `SAFARI_REPAIR_NOTES.md` for the audit-to-file map and device checks still needed. Existing older release notes below describe their historical verification, not this release's test results.
+
 ## 4.5.0 monthly Calendar analytics
 
 The bottom of the Calendar tab now summarizes the month being viewed. It includes gross earnings, estimated profit, deliveries, miles, estimated work time, active days, gross/hour, profit/hour, average earnings per active day, mileage deduction, month-over-month changes, strongest platform, zone, hour, top earning day, daily earnings bars, and expandable platform/zone rankings.
@@ -7,7 +19,7 @@ Monthly analysis uses local saved data only. Work time prefers saved Start/Pause
 ## 4.4.0 Functional minimalist UI
 GigLens now uses a cohesive mobile-first interface based on the supplied reference: clear brand/shift header, data-first earnings hero, screenshot-first action, disclosure-based secondary content, and a compact functional navigation bar. The redesign preserves Calendar, OCR learning, screenshot timestamps, History, Analytics, backups, and Settings.
 
-Current release: `4.4.0`.
+Current release: `4.6.0`.
 
 ## 4.3.0 Calendar and screenshot timestamps
 
@@ -49,7 +61,7 @@ The in-app logo is now embedded directly in the page, eliminating the broken-ima
 
 GigLens is a private, local-first command center for drivers who run several gig apps at once. Its fastest workflow is: take an offer or completed-delivery screenshot, scan it, review the detected app/merchant/pay/miles/time, and save it while the day is still moving. Saved deliveries then power earnings, estimated profit, mileage deduction, hourly pace, platform, zone, shift, and accept/decline analytics.
 
-Current release: `4.3.0`.
+Current release: `4.6.0`.
 
 Release verification: JavaScript syntax passed; the expanded executable browser-mock smoke suite passed; all `43/43` Python regressions passed; the supplied Uber/DoorDash screenshot accent calibration passed; desktop and 390×844 iPhone browser QA passed with no console errors; canonical icon validation and public-secret scanning passed.
 
@@ -112,7 +124,7 @@ GigLens is a local-first Progressive Web App for gig delivery drivers. It tracks
 
 ## Current release
 
-Version: `4.3.0`, built on the v4.2.0 audited command-center package.
+Version: `4.6.0`. See `SAFARI_REPAIR_NOTES.md` for the current changes and verification limits.
 
 This release preserves the static PWA architecture. There is no backend, database server, framework, build step, or account system. The app runs from plain static files and stores user data locally in the browser.
 

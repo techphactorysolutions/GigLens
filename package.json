@@ -1,13 +1,17 @@
 {
   "name": "giglens-pwa",
-  "version": "4.5.0",
+  "version": "4.6.0",
   "private": true,
-  "description": "GigLens 4.5 local-first PWA with calendar monthly analytics, screenshot timestamps, OCR learning, functional-minimalist UI, backups, and decision tracking.",
+  "description": "GigLens local-first driver PWA with atomic storage and Safari upload, export, accessibility, and offline reliability fixes.",
   "scripts": {
     "test": "python -m unittest discover -s tests",
     "syntax": "node --check app.js && node --check service-worker.js && node --check 404.js",
-    "smoke": "node tools/smoke-startup.js"
+    "smoke": "node tools/smoke-startup.js",
+    "safari": "node tools/safari-regressions.js",
+    "browser": "node tools/browser-smoke.js"
   },
   "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
 }
